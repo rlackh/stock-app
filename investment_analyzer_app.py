@@ -14,19 +14,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 컴퓨터/스마트폰 화면 짤림 방지 CSS 강제 주입
+# 💡 [글로벌 레이아웃 짤림방지 및 자동 유연화 CSS 엔지니어링]
+# 컴퓨터 브라우저 확대 비율, 해상도, 기기 종류에 상관없이 모든 컨텐츠가 가로폭 내부로 자동 압축 정렬되게 만드는 무적의 웹 스타일입니다.
 st.markdown("""
     <style>
-    .stMarkdown, .stTable, div[data-testid="stMetricValue"] {
+    /* 전체 마크다운, 메트릭, 텍스트 요소 줄바꿈 강제 강제 */
+    .stMarkdown, .stTable, div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stTabs, p, span, li {
         word-break: break-all !important;
         white-space: normal !important;
+        overflow-wrap: break-word !important;
     }
+    /* 메인 화면 컨테이너 자체의 여백을 조절하여 짤림 방지 지지선 확보 */
+    .block-container {
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+        max-width: 100% !important;
+    }
+    /* 데이터 표(Table) 가로 스크롤 방지 및 폭 강제 고정 */
     table {
         width: 100% !important;
+        table-layout: fixed !important;
     }
     th, td {
         word-wrap: break-word !important;
-        max-width: 200px !important;
+        white-space: normal !important;
+    }
+    /* 이평선 차트 컴포넌트가 화면 밖으로 탈출하는 현상 차단 */
+    div[data-testid="stVisGlRenderer"], .stChart, div[class^="st-emotion-cache"] {
+        max-width: 100% !important;
+        overflow: hidden !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -236,7 +252,7 @@ else:
 
         advanced_news = get_advanced_financial_news(stock_name, ticker_code)
         
-        # 💡 투자 매력도 총점 연산 엔진
+        # 투자 매력도 총점 연산 엔진
         base_score = 50
         if rsi <= 38: base_score += 15
         if "골든크로스" in cross_signal: base_score += 15
@@ -259,25 +275,24 @@ else:
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
         col3.metric(label="20일 평균 대비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발" if vol_ratio>=1.5 else "정상")
         
-        # ==========================================
-        # 💡 [요청 반영] 투자자 전용 3대 결론 매칭 시스템
-        # ==========================================
         if final_score >= 75:
             decision_text = "🔥 강력 매수"
-            decision_delta = "5인 전문가 전원 일치 추천 바닥권"
+            decision_delta = "5인 전문가 추천 바닥권"
             opinion, strategy_text = "🔥 강력 매수", "안전마진과 차트 변곡점이 모두 융합된 최적의 바닥 타점입니다."
         elif final_score >= 50:
             decision_text = "✅ 분할 매수 / 모아가기"
-            decision_delta = "하방 경직성 확보, 주별 분할 접근 권장"
-            opinion, strategy_text = "✅ 분할 매수 / 모아가기", "하단 지지선을 디딤돌 삼아 장기 유동성 물량을 천천히 모아가기 좋은 구간입니다."
+            decision_delta = "하방 경직성 확보, 주별 분할 접근"
+            opinion, strategy_text = "✅ 분할 매수 / 모아가기", "하단 지지선을 디딤돌 삼아 장기 물량을 천천히 모아가기 좋은 구간입니다."
         else:
             decision_text = "🚨 매수 금지"
-            decision_delta = "리스크 관리 발동, 추가 지하실 붕괴 우려"
+            decision_delta = "추가 지하실 붕괴 우려, 관망 요망"
             opinion, strategy_text = "🚨 매수 금지", "악재 수렴 중이거나 차트가 고점 과열 상태입니다. 현금을 쥐고 관망하십시오."
             
-        col4.metric(label="🏛 nighttime 투자 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
+        col4.metric(label="🏛️ AITAS-EQ 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
 
         st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
+        
+        # 좌우 반반 분할 레이아웃 실행
         left_col, right_col = st.columns([1, 1])
         
         with left_col:
@@ -291,8 +306,8 @@ else:
             with tab2:
                 st.markdown("### 🎯 실전 매수/매도 타이밍 제안")
                 st.markdown(f"#### **📊 AITAS-EQ 투자 매력도 총점: `{final_score}점 / 100점`**")
-                
                 st.info(f"**최종 투자 의견:** {opinion}\n\n**전략 코멘트:** {strategy_text}")
+                
                 support_price, target_price, stop_loss = int(current_price * 0.95), int(current_price * 1.25), int(current_price * 0.90)
                 st.success(f"🎯 **추천 분할 매수 타점:** {format(support_price, ',')} 원 부근")
                 st.warning(f"📈 **1차 목표 이익 실현가:** {format(target_price, ',')} 원")
@@ -305,7 +320,10 @@ else:
         with right_col:
             st.markdown("### 📈 주가 흐름 및 3대 핵심 이동평균선(MA)")
             df_ma_chart = df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'})
+            
+            # 차트 강제 가속 및 가로폭 고정 출력
             st.line_chart(df_ma_chart)
+            
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
