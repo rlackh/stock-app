@@ -7,7 +7,7 @@ import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
 
-# 1. 페이지 기본 설정 (컴퓨터/태블릿 브라우저 최적화)
+# 1. 페이지 기본 설정 (컴퓨터/태블릿/스마트폰 브라우저 최적화)
 st.set_page_config(page_title="AITAS-EQ 실시간 투자 전략 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
@@ -49,11 +49,9 @@ def find_stock_code_global(name_or_code):
     
     # 1단계: 숫자로 된 6자리 종목코드가 입력된 경우 즉시 시장 판별
     if query.isdigit() and len(query) == 6:
-        # 코스피(.KS)인지 코스닥(.KQ)인지 야후 서버에 직접 질의하여 0.5초만에 판별
         for suffix in [".KS", ".KQ"]:
             try:
                 t = yf.Ticker(f"{query}{suffix}")
-                # 종목 정보가 존재한다면 유효한 티커로 판정
                 if t.history(period="1d").empty == False:
                     return query, query, "KOSPI" if suffix == ".KS" else "KOSDAQ"
             except:
@@ -74,7 +72,6 @@ def find_stock_code_global(name_or_code):
         if 'quotes' in s_res and s_res['quotes']:
             for q in s_res['quotes']:
                 symbol = q.get('symbol', '')
-                # 한국 주식 검증 (.KS 또는 .KQ로 끝나는 아이템 추적)
                 if symbol.endswith('.KS') or symbol.endswith('.KQ'):
                     code = symbol.split('.')[0]
                     name = q.get('shortname', query)
