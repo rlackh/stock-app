@@ -14,20 +14,14 @@ st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
 
 # ==========================================
-# 2. 사이드바 - [와일드카드 엔진 업그레이드] 종목코드 사전 및 분석 창
+# 2. 사이드바 - 종목코드 사전 및 분석 창
 # ==========================================
 st.sidebar.header("🔍 종목 분석 및 코드 검색")
-
-# (기능 1) 실제 주식 분석을 돌릴 메인 입력창
 ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="005930")
-
-st.sidebar.markdown("---") # 구분선
-
-# (기능 2) 종목코드를 모를 때 찾는 전용 검색창
+st.sidebar.markdown("---")
 st.sidebar.subheader("📖 종목코드 사전")
 search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: sk텔레콤)", value="")
 
-# 주말 해외 서버 환경에서도 100% 작동하는 안전한 대형주 백업 사전 (동의어 대거 추가)
 def get_local_heavy_db():
     return {
         "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
@@ -42,31 +36,20 @@ def get_local_heavy_db():
     }
 
 if search_keyword.strip():
-    # 💡 영문이 입력될 경우를 대비해 무조건 대문자로 치환하고 공백 제거 (sk -> SK 자동 보정)
     query_clean = search_keyword.strip().replace(" ", "").upper()
-    
-    # 한글 '에스케이' 처리 보정 타겟팅
-    if "에스케이" in query_clean:
-        query_clean = query_clean.replace("에스케이", "SK")
-        
+    if "에스케이" in query_clean: query_clean = query_clean.replace("에스케이", "SK")
     found_any = False
     st.sidebar.write("📌 **검색된 종목코드 결과:**")
-    
-    # [1차 필터] 내장 사전 와일드카드 매칭
     local_db = get_local_heavy_db()
     for name, code in local_db.items():
         if query_clean in name.upper():
             mkt = "코스닥" if name in ["에코프로", "에코프로비엠"] else "코스피"
             st.sidebar.code(f"{name} : {code} ({mkt})", language="text")
             found_any = True
-            
-    # [2차 필터] 글로벌 야후 파이낸스 쿼리 보정 전송
     try:
-        # 야후 검색용 쿼리는 띄어쓰기가 있는 것이 한글/영문 매칭에 유리하므로 변환
         api_query = search_keyword.strip().upper()
         search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(api_query)}&quotesCount=15"
-        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}, timeout=2).json()
-        
+        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
         if 'quotes' in res and res['quotes']:
             for q in res['quotes']:
                 symbol = q.get('symbol', '')
@@ -74,52 +57,37 @@ if search_keyword.strip():
                     s_code = symbol.split('.')[0]
                     s_name = q.get('shortname', query_clean)
                     s_market = "코스피" if symbol.endswith('.KS') else "코스닥"
-                    
-                    # 중복 출력 제거 및 결과 표기
                     if s_code not in list(local_db.values()):
                         st.sidebar.code(f"{s_name} : {s_code} ({s_market})", language="text")
                         found_any = True
-    except:
-        pass
-
-    if not found_any:
-        st.sidebar.warning("🔍 일치하는 종목코드가 없습니다. 다른 명칭으로 입력해 보세요.")
-
+    except: pass
+    if not found_any: st.sidebar.warning("🔍 일치하는 종목코드가 없습니다.")
 st.sidebar.markdown("---")
 
-
 def get_safe_business_day(offset=0):
-    """주말 및 휴장일을 피해 안전한 영업일 날짜를 계산하는 엔진"""
     today = datetime.utcnow() + timedelta(hours=9) - timedelta(days=offset)
-    while today.weekday() >= 5:
-        today -= timedelta(days=1)
+    while today.weekday() >= 5: today -= timedelta(days=1)
     if today.hour < 16 and offset == 0:
         today -= timedelta(days=1)
-        while today.weekday() >= 5:
-            today -= timedelta(days=1)
+        while today.weekday() >= 5: today -= timedelta(days=1)
     return today.strftime("%Y%m%d")
 
 @st.cache_data(ttl=60)
 def find_stock_code_global(name_or_code):
     query = str(name_or_code).strip().replace(" ", "").upper()
-    if "에스케이" in query:
-        query = query.replace("에스케이", "SK")
-    
+    if "에스케이" in query: query = query.replace("에스케이", "SK")
     if query.isdigit() and len(query) == 6:
         for suffix in [".KS", ".KQ"]:
             try:
                 t = yf.Ticker(f"{query}{suffix}")
                 if not t.history(period="1d").empty:
-                    stock_name = t.info.get('shortName', query)
-                    return query, stock_name, "KOSPI" if suffix == ".KS" else "KOSDAQ"
+                    return query, t.info.get('shortName', query), "KOSPI" if suffix == ".KS" else "KOSDAQ"
             except: pass
         return query, query, "KOSPI"
-
     fallback_db = get_local_heavy_db()
     if query in fallback_db:
         code = fallback_db[query]
         return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
-
     try:
         search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name_or_code.strip())}&quotesCount=10"
         s_res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
@@ -129,24 +97,46 @@ def find_stock_code_global(name_or_code):
                 if symbol.endswith('.KS') or symbol.endswith('.KQ'):
                     return symbol.split('.')[0], q.get('shortname', query), ("KOSPI" if symbol.endswith('.KS') else "KOSDAQ")
     except: pass
-        
     return None, None, None
 
-def get_naver_news(stock_name):
+# 💡 [신기능 엔진] 증권사 및 인터넷 실시간 통합 뉴스 터미널 연동
+def get_advanced_financial_news(stock_name, ticker_code):
     news_list = []
+    seen_titles = set()
+    
+    # 1단계 파이프라인: 글로벌 증권사 전용 실시간 뉴스 피드 가동 (야후 금융 데이터 센터 연동)
     try:
-        enc_text = urllib.parse.quote(stock_name + " 주가")
+        suffix = ".KS" if int(ticker_code) < 900000 else ".KQ" # 대략적 시장 분류
+        yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
+        yf_news = yf_stock.news
+        if yf_news:
+            for n in yf_news[:3]: # 최신 증권 전문 뉴스 3개 추출
+                title = n.get('title', '')
+                link = n.get('link', '#')
+                publisher = n.get('publisher', '증권사속보')
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    news_list.append({"title": f"[{publisher}] {title}", "link": link, "sent": "⚡ 기관 전용 속보"})
+    except: pass
+
+    # 2단계 파이프라인: 국내 인터넷 경제·금융 실시간 뉴스 통합 RSS 수집
+    try:
+        enc_text = urllib.parse.quote(stock_name + " 금융 공시")
         url = f"https://news.naver.com/rss?keyword={enc_text}"
         root = ET.fromstring(requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).text.encode('utf-8'))
-        pos_words = ['상승', '돌파', '급등', '호재', '최고', '수혜', '흑자', '계약', '실적대박']
-        neg_words = ['하락', '급락', '악재', '우려', '감소', '적자', '쇼크', '이탈', '순매도']
-        for item in root.findall('.//item')[:5]:
+        pos_words = ['상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '실적대박', '영업이익증가']
+        neg_words = ['하락', '급락', '악재', '우려', '감소', '적자', '쇼크', '이탈', '순매도', '과징금']
+        
+        for item in root.findall('.//item')[:4]:
             title = item.find('title').text or ""
             link = item.find('link').text or "#"
-            score = sum(1 for pw in pos_words if pw in title) - sum(1 for nw in neg_words if nw in title)
-            sent = "🟢 호재 성향" if score > 0 else ("🔴 악재 성향" if score < 0 else "⚪ 중립 기사")
-            news_list.append({"title": title, "link": link, "sent": sent})
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                score = sum(1 for pw in pos_words if pw in title) - sum(1 for nw in neg_words if nw in title)
+                sent = "🟢 호재 성향" if score > 0 else ("🔴 악재 성향" if score < 0 else "⚪ 중립 속보")
+                news_list.append({"title": title, "link": link, "sent": sent})
     except: pass
+    
     return news_list
 
 # 통합 검색 엔진 가동
@@ -158,14 +148,11 @@ else:
     suffix = ".KS" if market_type == "KOSPI" else ".KQ"
     yf_ticker = f"{ticker_code}{suffix}"
     
-    try:
-        df_chart = yf.Ticker(yf_ticker).history(period="6mo")
-    except:
-        df_chart = pd.DataFrame()
+    try: df_chart = yf.Ticker(yf_ticker).history(period="6mo")
+    except: df_chart = pd.DataFrame()
     
     safe_date = get_safe_business_day()
     df_net_buy = pd.DataFrame()
-    
     try:
         start_date = get_safe_business_day(offset=30)
         df_net_buy = stock.get_market_net_purchases_of_equities_by_ticker(start_date, safe_date, market_type)
@@ -181,22 +168,16 @@ else:
         df_chart['MA5'] = df_chart['Close'].rolling(window=5).mean()
         df_chart['MA20'] = df_chart['Close'].rolling(window=20).mean()
         df_chart['MA60'] = df_chart['Close'].rolling(window=60).mean()
-        
         ma5_curr, ma20_curr, ma60_curr = df_chart['MA5'].iloc[-1], df_chart['MA20'].iloc[-1], df_chart['MA60'].iloc[-1]
         
-        if ma5_curr > ma20_curr > ma60_curr:
-            chart_trend = "📈 강력 상승 정배열 상태"
-        elif ma5_curr < ma20_curr < ma60_curr:
-            chart_trend = "📉 하락 역배열 상태"
-        else:
-            chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보)"
+        if ma5_curr > ma20_curr > ma60_curr: chart_trend = "📈 강력 상승 정배열 상태"
+        elif ma5_curr < ma20_curr < ma60_curr: chart_trend = "📉 하락 역배열 상태"
+        else: chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보)"
             
         ma5_prev, ma20_prev = df_chart['MA5'].iloc[-2], df_chart['MA20'].iloc[-2]
         cross_signal = "🟢 특이 매수/매도 시그널 없음"
-        if ma5_prev <= ma20_prev and ma5_curr > ma20_curr:
-            cross_signal = "🔥 골든크로스 발생! (단기 강력 매수 신호)"
-        elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr:
-            cross_signal = "🚨 데드크로스 발생!"
+        if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: cross_signal = "🔥 골든크로스 발생! (단기 강력 매수 신호)"
+        elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr: cross_signal = "🚨 데드크로스 발생!"
             
         high_3mo = df_chart['Close'].iloc[-60:].max()
         drop_rate = ((high_3mo - current_price) / high_3mo) * 100
@@ -230,7 +211,7 @@ else:
         left_col, right_col = st.columns([1, 1])
         
         with left_col:
-            tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 토론", "🚀 실전 매수 타이밍", "📰 AI 뉴스 속보"])
+            tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 토론", "🚀 실전 매수 타이밍", "📰 증권사 실시간 속보"])
             with tab1:
                 st.markdown(f"### 💬 전문가 그룹의 핵심 논쟁")
                 st.markdown(f"**🔹 거시경제 분석가:** 현재 거시 기조 속에서 {stock_name}의 업황 방어력을 진단해야 합니다.")
@@ -253,19 +234,17 @@ else:
                 st.warning(f"📈 **1차 목표 이익 실현가:** {format(target_price, ',')} 원")
                 st.error(f"🚨 **원칙적 리스크 손절선:** {format(stop_loss, ',')} 원")
             with tab3:
-                st.markdown(f"### 📰 {stock_name} 관련 실시간 뉴스 속보")
-                news_data = get_naver_news(stock_name)
-                if news_data:
-                    for news in news_data: st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
-                else: st.write("🔍 최신 뉴스를 불러오는 중이거나 장 마감 후 정산 중입니다.")
+                st.markdown(f"### 📰 {stock_name} 증권 터미널 실시간 속보")
+                advanced_news = get_advanced_financial_news(stock_name, ticker_code)
+                if advanced_news:
+                    for news in advanced_news: st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
+                else: st.write("🔍 새로운 증권사 공시 및 속보를 모니터링하고 있습니다.")
 
         with right_col:
             st.markdown("### 📈 주가 흐름 및 세력(외인/기관) 수급 트렌드")
             st.caption("🔹 최근 3개월 주가 추이")
             st.line_chart(df_chart['Close'])
-            
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
-            
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
                 foreign_buy = df_net_buy.loc[ticker_code, '외국인합계'] / 100000000
@@ -273,5 +252,4 @@ else:
                 c1, c2 = st.columns(2)
                 c1.metric(label="👨‍🎤 외국인 한달 누적", value=f"{foreign_buy:.1f} 억 원", delta="매수 우위" if foreign_buy>0 else "매도 우위")
                 c2.metric(label="🏢 기관 한달 누적", value=f"{institution_buy:.1f} 억 원", delta="매수 우위" if institution_buy>0 else "매도 우위")
-            else:
-                st.warning("⚠️ 세력 수급 금액은 평일 장중에 실시간으로 집계되어 표기됩니다.")
+            else: st.warning("⚠️ 세력 수급 금액은 평일 장중에 실시간으로 집계되어 표기됩니다.")
