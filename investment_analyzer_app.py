@@ -28,7 +28,7 @@ def get_safe_business_day(offset=0):
             today -= timedelta(days=1)
     return today.strftime("%Y%m%d")
 
-@st.sidebar.cache_data(ttl=3600)
+@st.cache_data(ttl=3600)
 def load_fallback_db():
     """국내 서버 전면 차단 시 작동하는 코스피/코스닥 주요 100종목 초고속 마스터 맵"""
     return {
