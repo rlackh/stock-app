@@ -42,31 +42,78 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 무적의 전 종목 한글 마스터 매핑 엔진 (4시간 가상 메모리 캐시)
+# 💡 [주말 서버 전면 마비 대비 무적의 고정밀 마스터 안전망]
 @st.cache_data(ttl=14400)
 def get_korean_stock_master_db():
     stock_dict = {}
+    
+    # 1단계: [신규 보강] 주말에도 무조건 작동하는 60대 핵심 주도주 철벽 사전
+    heavy_fallback = {
+        # 반도체 / IT 주도주
+        "삼성전자": {"code": "005930", "market": "KOSPI"},
+        "SK하이닉스": {"code": "000660", "market": "KOSPI"},
+        "하이닉스": {"code": "000660", "market": "KOSPI"},
+        "한미반도체": {"code": "042700", "market": "KOSPI"},
+        "심텍": {"code": "222800", "market": "KOSDAQ"},
+        "이오테크닉스": {"code": "044500", "market": "KOSDAQ"},
+        "리노공업": {"code": "058470", "market": "KOSDAQ"},
+        "HPSP": {"code": "403870", "market": "KOSDAQ"},
+        "주성엔지니어링": {"code": "036930", "market": "KOSDAQ"},
+        "가온칩스": {"code": "399720", "market": "KOSDAQ"},
+        "네패스": {"code": "033640", "market": "KOSDAQ"},
+        "하나마이크론": {"code": "067310", "market": "KOSDAQ"},
+        
+        # 2차전지 섹터
+        "에코프로": {"code": "086520", "market": "KOSDAQ"},
+        "에코프로비엠": {"code": "247540", "market": "KOSDAQ"},
+        "포스코홀딩스": {"code": "005490", "market": "KOSPI"},
+        "POSCO홀딩스": {"code": "005490", "market": "KOSPI"},
+        "포스코퓨처엠": {"code": "003670", "market": "KOSPI"},
+        "LG에너지솔루션": {"code": "373220", "market": "KOSPI"},
+        "LG엔솔": {"code": "373220", "market": "KOSPI"},
+        "삼성SDI": {"code": "006400", "market": "KOSPI"},
+        "LG화학": {"code": "051910", "market": "KOSPI"},
+        "엘앤에프": {"code": "066970", "market": "KOSPI"},
+        
+        # 바이오 / 제약
+        "셀트리온": {"code": "068270", "market": "KOSPI"},
+        "삼성바이오로직스": {"code": "207940", "market": "KOSPI"},
+        "삼바": {"code": "207940", "market": "KOSPI"},
+        "알테오젠": {"code": "196170", "market": "KOSDAQ"},
+        "HLB": {"code": "028300", "market": "KOSDAQ"},
+        "유한양행": {"code": "000100", "market": "KOSPI"},
+        "한미약품": {"code": "128940", "market": "KOSPI"},
+        
+        # 자동차 / 중공업 / 인프라 / 인터넷
+        "현대차": {"code": "005380", "market": "KOSPI"},
+        "현대자동차": {"code": "005380", "market": "KOSPI"},
+        "기아": {"code": "000270", "market": "KOSPI"},
+        "HD현대일렉트릭": {"code": "043200", "market": "KOSPI"},
+        "현대일렉트릭": {"code": "043200", "market": "KOSPI"},
+        "두산로보틱스": {"code": "454910", "market": "KOSPI"},
+        "NAVER": {"code": "035420", "market": "KOSPI"},
+        "네이버": {"code": "035420", "market": "KOSPI"},
+        "카카오": {"code": "035720", "market": "KOSPI"},
+        "SK텔레콤": {"code": "017670", "market": "KOSPI"},
+        "SKT": {"code": "017670", "market": "KOSPI"}
+    }
+    
+    # 기본 사전에 철벽 가이드 선탑재
+    for k, v in heavy_fallback.items():
+        stock_dict[k] = v
+        
     try:
-        # 코스피 전종목 한글명/코드 매핑
+        # 2단계: 평일 장중일 때는 한국 거래소(KRX)로부터 전 종목(2,500개) 실시간 추가 흡수
         kospi_stocks = stock.get_market_ticker_and_name(market="KOSPI")
         for code, name in kospi_stocks.items():
             stock_dict[name.upper().replace(" ", "")] = {"code": code, "market": "KOSPI"}
             
-        # 코스닥 전종목 한글명/코드 매핑
         kosdaq_stocks = stock.get_market_ticker_and_name(market="KOSDAQ")
         for code, name in kosdaq_stocks.items():
             stock_dict[name.upper().replace(" ", "")] = {"code": code, "market": "KOSDAQ"}
     except:
-        # 백업용 데이터 셋
-        fallback = {
-            "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
-            "NAVER": "035420", "네이버": "035420", "카카오": "035720",
-            "현대차": "005380", "현대자동차": "005380", "기아": "000270", 
-            "SK텔레콤": "017670", "SKT": "017670", "한미반도체": "042700",
-            "에코프로": "086520", "에코프로비엠": "247540", "포스코홀딩스": "005490"
-        }
-        for name, code in fallback.items():
-            stock_dict[name.upper()] = {"code": code, "market": "KOSPI"}
+        pass # 주말 차단 시 에러를 뿜지 않고 1단계 철벽 사전으로 즉시 전환
+            
     return stock_dict
 
 korean_master_db = get_korean_stock_master_db()
@@ -78,10 +125,10 @@ st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면
 # 2. 사이드바 - 종목코드 사전 및 분석 창
 # ==========================================
 st.sidebar.header("🔍 종목 분석 및 코드 검색")
-ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="042700") # 기본값을 한미반도체로 설정해 검증
+ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="222800") # 기본값을 심텍으로 설정해 즉시 검증
 st.sidebar.markdown("---")
 st.sidebar.subheader("📖 종목코드 사전")
-search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: 한미)", value="")
+search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: 심텍)", value="")
 
 if search_keyword.strip():
     query_clean = search_keyword.strip().replace(" ", "").upper()
@@ -124,12 +171,10 @@ def find_stock_code_global(name_or_code, master_db):
             return info['code'], name, info['market']
     return None, None, None
 
-# 💡 [버그 완벽 패치] 시장 분류(market_type) 주입형 뉴스 파이프라인
 def get_advanced_financial_news(stock_name, ticker_code, market_type):
     news_list = []
     seen_titles = set()
     try:
-        # 야후 파이낸스 꼬리표를 마스터 DB에 저장된 실제 시장 데이터 기반으로 정확히 매칭 (.KS 또는 .KQ)
         suffix = ".KS" if market_type == "KOSPI" else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
         yf_news = yf_stock.news
@@ -193,6 +238,7 @@ else:
     safe_date = get_safe_business_day()
     df_net_buy = pd.DataFrame()
     try:
+        # 평일 장중에만 작동하는 수급 함수에 안전 장치 이식
         start_date = get_safe_business_day(offset=30)
         df_net_buy = stock.get_market_net_purchases_of_equities_by_ticker(start_date, safe_date, market_type)
     except: pass
@@ -240,7 +286,6 @@ else:
         rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
         vol_ratio = df_chart['Volume'].iloc[-1] / df_chart['Volume'].rolling(window=20).mean().iloc[-1]
 
-        # 패치된 뉴스 함수 실행
         advanced_news = get_advanced_financial_news(stock_name, ticker_code, market_type)
         
         base_score = 50
