@@ -14,7 +14,7 @@ st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
 
 # ==========================================
-# 2. 사이드바 - [엔진 전면 재개조] 종목코드 사전 및 분석 창
+# 2. 사이드바 - [와일드카드 엔진 업그레이드] 종목코드 사전 및 분석 창
 # ==========================================
 st.sidebar.header("🔍 종목 분석 및 코드 검색")
 
@@ -25,9 +25,9 @@ st.sidebar.markdown("---") # 구분선
 
 # (기능 2) 종목코드를 모를 때 찾는 전용 검색창
 st.sidebar.subheader("📖 종목코드 사전")
-search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: 현대)", value="")
+search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: sk텔레콤)", value="")
 
-# 주말 해외 서버 환경에서도 100% 작동하는 안전한 대형주 백업 사전
+# 주말 해외 서버 환경에서도 100% 작동하는 안전한 대형주 백업 사전 (동의어 대거 추가)
 def get_local_heavy_db():
     return {
         "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
@@ -37,27 +37,35 @@ def get_local_heavy_db():
         "삼바": "207940", "삼성전자우": "005935",
         "에코프로": "086520", "에코프로비엠": "247540", "포스코홀딩스": "005490",
         "POSCO홀딩스": "005490", "삼성SDI": "006400", "LG화학": "051910",
-        "신한지주": "055550", "KB금융": "105560", "하나금융지주": "086790"
+        "신한지주": "055550", "KB금융": "105560", "하나금융지주": "086790",
+        "SK텔레콤": "017670", "SKT": "017670", "에스케이텔레콤": "017670"
     }
 
 if search_keyword.strip():
+    # 💡 영문이 입력될 경우를 대비해 무조건 대문자로 치환하고 공백 제거 (sk -> SK 자동 보정)
     query_clean = search_keyword.strip().replace(" ", "").upper()
-    found_any = False
     
+    # 한글 '에스케이' 처리 보정 타겟팅
+    if "에스케이" in query_clean:
+        query_clean = query_clean.replace("에스케이", "SK")
+        
+    found_any = False
     st.sidebar.write("📌 **검색된 종목코드 결과:**")
     
-    # [1차 필터] 내장 사전에서 키워드가 포함되는지 먼저 검색 (통신 불필요, 0초 만에 완료)
+    # [1차 필터] 내장 사전 와일드카드 매칭
     local_db = get_local_heavy_db()
     for name, code in local_db.items():
-        if query_clean in name:
+        if query_clean in name.upper():
             mkt = "코스닥" if name in ["에코프로", "에코프로비엠"] else "코스피"
             st.sidebar.code(f"{name} : {code} ({mkt})", language="text")
             found_any = True
             
-    # [2차 필터] 내장 사전에 없으면 글로벌 야후 파이낸스 안전망 API 가동 (한국 차단벽 완전 우회)
+    # [2차 필터] 글로벌 야후 파이낸스 쿼리 보정 전송
     try:
-        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query_clean)}&quotesCount=10"
-        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
+        # 야후 검색용 쿼리는 띄어쓰기가 있는 것이 한글/영문 매칭에 유리하므로 변환
+        api_query = search_keyword.strip().upper()
+        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(api_query)}&quotesCount=15"
+        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}, timeout=2).json()
         
         if 'quotes' in res and res['quotes']:
             for q in res['quotes']:
@@ -67,7 +75,7 @@ if search_keyword.strip():
                     s_name = q.get('shortname', query_clean)
                     s_market = "코스피" if symbol.endswith('.KS') else "코스닥"
                     
-                    # 중복 출력 방지
+                    # 중복 출력 제거 및 결과 표기
                     if s_code not in list(local_db.values()):
                         st.sidebar.code(f"{s_name} : {s_code} ({s_market})", language="text")
                         found_any = True
@@ -75,7 +83,7 @@ if search_keyword.strip():
         pass
 
     if not found_any:
-        st.sidebar.warning("🔍 일치하는 종목코드가 없습니다.")
+        st.sidebar.warning("🔍 일치하는 종목코드가 없습니다. 다른 명칭으로 입력해 보세요.")
 
 st.sidebar.markdown("---")
 
@@ -93,8 +101,9 @@ def get_safe_business_day(offset=0):
 
 @st.cache_data(ttl=60)
 def find_stock_code_global(name_or_code):
-    """숫자가 입력되면 즉시 종목코드로 인식하고, 한글이 입력되면 코드로 상호 변환하는 글로벌 엔진"""
     query = str(name_or_code).strip().replace(" ", "").upper()
+    if "에스케이" in query:
+        query = query.replace("에스케이", "SK")
     
     if query.isdigit() and len(query) == 6:
         for suffix in [".KS", ".KQ"]:
@@ -102,10 +111,8 @@ def find_stock_code_global(name_or_code):
                 t = yf.Ticker(f"{query}{suffix}")
                 if not t.history(period="1d").empty:
                     stock_name = t.info.get('shortName', query)
-                    market_type = "KOSPI" if suffix == ".KS" else "KOSDAQ"
-                    return query, stock_name, market_type
-            except:
-                pass
+                    return query, stock_name, "KOSPI" if suffix == ".KS" else "KOSDAQ"
+            except: pass
         return query, query, "KOSPI"
 
     fallback_db = get_local_heavy_db()
@@ -114,18 +121,14 @@ def find_stock_code_global(name_or_code):
         return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
 
     try:
-        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}&quotesCount=10"
+        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name_or_code.strip())}&quotesCount=10"
         s_res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
         if 'quotes' in s_res and s_res['quotes']:
             for q in s_res['quotes']:
                 symbol = q.get('symbol', '')
                 if symbol.endswith('.KS') or symbol.endswith('.KQ'):
-                    code = symbol.split('.')[0]
-                    name = q.get('shortname', query)
-                    market_type = "KOSPI" if symbol.endswith('.KS') else "KOSDAQ"
-                    return code, name, market_type
-    except:
-        pass
+                    return symbol.split('.')[0], q.get('shortname', query), ("KOSPI" if symbol.endswith('.KS') else "KOSDAQ")
+    except: pass
         
     return None, None, None
 
