@@ -90,7 +90,7 @@ def find_stock_code_global(name_or_code):
         return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
     try:
         search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name_or_code.strip())}&quotesCount=10"
-        s_res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+        s_res = requests.get(s_res).json() if 's_res' in locals() else requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
         if 'quotes' in s_res and s_res['quotes']:
             for q in s_res['quotes']:
                 symbol = q.get('symbol', '')
@@ -99,43 +99,74 @@ def find_stock_code_global(name_or_code):
     except: pass
     return None, None, None
 
+# 💡 [AI기반 투자 심리 분류 엔진 엔진] 
 def get_advanced_financial_news(stock_name, ticker_code):
     news_list = []
     seen_titles = set()
+    
+    # 1단계: 야후 파이낸스 글로벌 공시 연동
     try:
         suffix = ".KS" if int(ticker_code) < 900000 else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
         yf_news = yf_stock.news
         if yf_news:
-            for n in yf_news[:3]:
+            for n in yf_news[:2]:
                 title = n.get('title', '')
                 link = n.get('link', '#')
                 publisher = n.get('publisher', '증권사속보')
                 if title and title not in seen_titles:
                     seen_titles.add(title)
-                    news_list.append({"title": f"[{publisher}] {title}", "link": link, "sent": "⚡ 기관 전용 속보"})
+                    news_list.append({"title": f"[{publisher}] {title}", "link": link, "raw_title": title})
     except: pass
 
+    # 2단계: 구글 금융 뉴스망 연동
     try:
-        enc_text = urllib.parse.quote(f"{stock_name} 주가 공시")
+        enc_text = urllib.parse.quote(f"{stock_name} 주가 공시 뉴스")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         root = ET.fromstring(res.text.encode('utf-8'))
-        pos_words = ['상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '실적대박', '이익']
-        neg_words = ['하락', '급락', '악재', '우려', '감소', '적자', '쇼크', '이탈', '순매도']
-        for item in root.findall('.//item')[:5]:
+        
+        for item in root.findall('.//item')[:8]:
             title = item.find('title').text or ""
             link = item.find('link').text or "#"
             if " - " in title: title = title.split(" - ")[0]
             if title and title not in seen_titles:
                 seen_titles.add(title)
-                score = sum(1 for pw in pos_words if pw in title) - sum(1 for nw in neg_words if nw in title)
-                sent = "🟢 호재 성향" if score > 0 else ("🔴 악재 성향" if score < 0 else "⚪ 실시간 속보")
-                news_list.append({"title": title, "link": link, "sent": sent})
+                news_list.append({"title": title, "link": link, "raw_title": title})
     except: pass
-    if not news_list:
-        news_list = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템 알림"}]
-    return news_list
+    
+    # 💡 3단계: 단어 사전을 통한 실시간 [위기/기회/악재/중립] 자동 분류 알고리즘
+    classified_news = []
+    
+    # 가치 판단 전용 키워드 사전 사전 정의
+    opportunity_words = ['기회', '상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '대박', '영업이익증가', '신고가', '독점', '수주', '인수', '매집']
+    crisis_words = ['위기', '상장폐지', '부도', '하한가', '유상증자', '횡령', '배임', '소송', '디폴트', '검찰', '조사', '조작', '쇼크', '폭락']
+    bad_words = ['하락', '급락', '악재', '우려', '감소', '적자', '이탈', '순매도', '과징금', '축소', '부진', '전망치하회', '하향']
+
+    for n in news_list:
+        title_text = n['raw_title']
+        
+        # 키워드 매칭 스코어링 계산
+        opp_score = sum(1 for w in opportunity_words if w in title_text)
+        crisis_score = sum(1 for w in crisis_words if w in title_text)
+        bad_score = sum(1 for w in bad_words if w in title_text)
+        
+        # 스코어에 의거한 우선순위 분류 태깅 (위기 > 악재 > 기회 > 중립)
+        if crisis_score > 0:
+            tag = "🚨 위기감지"
+        elif bad_score > opp_score:
+            tag = "📉 악재경보"
+        elif opp_score > bad_score:
+            tag = "🔥 투자기회"
+        else:
+            tag = "⚪ 중립속보"
+            
+        classified_news.append({"title": n['title'], "link": n['link'], "sent": tag})
+        
+    if not classified_news:
+        classified_news = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템알림"}]
+        
+    return classified_news
 
 # 통합 검색 엔진 가동
 ticker_code, stock_name, market_type = find_stock_code_global(ticker_input)
@@ -163,7 +194,6 @@ else:
         prev_price = int(df_chart['Close'].iloc[-2])
         price_change_percent = ((current_price - prev_price) / prev_price) * 100
         
-        # 💡 [핵심 기술적 지표 계산 연산]
         df_chart['5일 이동평균선'] = df_chart['Close'].rolling(window=5).mean()
         df_chart['20일 이동평균선'] = df_chart['Close'].rolling(window=20).mean()
         df_chart['60일 이동평균선'] = df_chart['Close'].rolling(window=60).mean()
@@ -234,20 +264,16 @@ else:
                 st.warning(f"📈 **1차 목표 이익 실현가:** {format(target_price, ',')} 원")
                 st.error(f"🚨 **원칙적 리스크 손절선:** {format(stop_loss, ',')} 원")
             with tab3:
-                st.markdown(f"### 📰 {stock_name} 증권 터미널 실시간 속보")
+                st.markdown(f"### 📰 {stock_name} 증권 터미널 속보 및 위험 진단")
                 advanced_news = get_advanced_financial_news(stock_name, ticker_code)
                 for news in advanced_news: 
                     st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
 
         with right_col:
             st.markdown("### 📈 주가 흐름 및 3대 핵심 이동평균선(MA)")
-            
-            # 💡 [이평선 차트 구현] 현재가 선과 5일, 20일, 60일 선을 하나의 맵으로 데이터 정제하여 동시 출력
             df_ma_chart = df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'})
             st.line_chart(df_ma_chart)
-            
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
-            
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
                 foreign_buy = df_net_buy.loc[ticker_code, '외국인합계'] / 100000000
