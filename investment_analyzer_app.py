@@ -7,8 +7,30 @@ import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
 
-# 1. 페이지 기본 설정 (스마트폰 및 모니터 화면 자동 최적화)
-st.set_page_config(page_title="AITAS-EQ 실시간 투자 전략 시스템", layout="wide", initial_sidebar_state="expanded")
+# 1. 페이지 기본 설정 및 모니터/스마트폰 가로 폭 짤림 방지 레이아웃 최적화
+st.set_page_config(
+    page_title="AITAS-EQ 실시간 투자 전략 시스템", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
+
+# 💡 [컴퓨터 화면 짤림 강제 방지 CSS 주입] 
+# 모니터 해상도나 창 크기에 상관없이 표(Table)와 텍스트가 자동으로 줄바꿈되도록 강제하는 무적의 코드입니다.
+st.markdown("""
+    <style>
+    .stMarkdown, .stTable, div[data-testid="stMetricValue"] {
+        word-break: break-all !important;
+        white-space: normal !important;
+    }
+    table {
+        width: 100% !important;
+    }
+    th, td {
+        word-wrap: break-word !important;
+        max-width: 200px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
@@ -213,57 +235,37 @@ else:
         rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
         vol_ratio = df_chart['Volume'].iloc[-1] / df_chart['Volume'].rolling(window=20).mean().iloc[-1]
 
-        # 💡 [5인 전문가 종합 의견 계량 연산 로직 백엔드 실행]
         advanced_news = get_advanced_financial_news(stock_name, ticker_code)
         
-        # 기본 가산점 설계
+        # 합산 알고리즘 연산
         base_score = 50
-        
-        # 1. 기술적 분석가 가산 (RSI가 바닥이거나 골든크로스 시 점수 업)
         if rsi <= 38: base_score += 15
         if "골든크로스" in cross_signal: base_score += 15
-        if rsi >= 65: base_score -= 15 # 과열 시 감점
-        
-        # 2. 가치 분석가 가산 (PBR 1.2 이하 안전마진 확보 시 점수 업)
+        if rsi >= 65: base_score -= 15
         if 0 < pbr <= 1.2: base_score += 10
-        if per > 35: base_score -= 10 # 고평가 감점
+        if per > 35: base_score -= 10
         
-        # 3. 세력 분석가 가산 (외인/기관 동시 매수 혹은 외인 순매수)
         foreign_buy = 0
         if not df_net_buy.empty and ticker_code in df_net_buy.index:
             foreign_buy = df_net_buy.loc[ticker_code, '외국인합계']
             if foreign_buy > 0: base_score += 10
             
-        # 4. 리스크 관리자 점수 반영 (뉴스 탭에 위기가 떴는가)
         has_crisis = any(n.get('crisis', 0) > 0 for n in advanced_news if 'crisis' in n)
-        if has_crisis: base_score -= 25 # 위기 감지 시 강력 감점
-        
-        # 최종 스코어 0~100 보정
+        if has_crisis: base_score -= 25
         final_score = max(0, min(100, base_score))
 
-        # 요약 보드 출력
+        # 메트릭 보드 출력
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(label=f"현재가 ({stock_name} / {ticker_code})", value=f"{format(current_price, ',')} 원", delta=f"{price_change_percent:.2f} %")
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
         col3.metric(label="20일 평균 대비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발" if vol_ratio>=1.5 else "정상")
         
-        # ==========================================
-        # 💡 [신규 추가] 5인 전문가 합의의 최종 도장 박스
-        # ==========================================
-        if final_score >= 75:
-            decision_text = "🔥 무조건 매수 (BUY)"
-            decision_delta = "5인 전문가 전원 일치 합의 완료"
-        elif final_score >= 50:
-            decision_text = "✅ 분할 매수 가능 (ACCUMULATE)"
-            decision_delta = "차트 안정권, 비중 조절 진입 권장"
-        elif final_score >= 35:
-            decision_text = "⚠️ 철저히 관망 (STAY)"
-            decision_delta = "이평선 역배열 또는 모멘텀 부족"
-        else:
-            decision_text = "🚨 매수 금지 / 매도 (SELL)"
-            decision_delta = "리스크 관리 가동, 지하실 붕괴 위험"
+        if final_score >= 75: decision_text = "🔥 무조건 매수 (BUY)"
+        elif final_score >= 50: decision_text = "Acc. (분할매수)"
+        elif final_score >= 35: decision_text = "⚠️ 관망 (STAY)"
+        else: decision_text = "🚨 매수 금지 (SELL)"
             
-        col4.metric(label="🏛️ AITAS-EQ 최종 결론 도장", value=decision_text, delta=decision_delta)
+        col4.metric(label="🏛️ AITAS-EQ 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
 
         st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
         left_col, right_col = st.columns([1, 1])
@@ -273,9 +275,9 @@ else:
             with tab1:
                 st.markdown(f"### 💬 전문가 그룹의 최종 결론 근거")
                 st.markdown(f"**🔹 거시경제 분석가:** 글로벌 유동성 완화 기조 속에서 {stock_name}의 시장 방어력 진단 중.")
-                st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배, 배당률 {div:.2f}%)의 내재가치 검증.")
-                st.markdown(f"**🔹 기술적 분석가:** 현재 RSI {rsi:.1f}점으로 심리적 바닥 혹은 변곡점 위치 역추적.")
-                st.markdown(f"**🔹 리스크 관리자:** 실시간 뉴스 및 공시 기반 펀더멘탈 훼손성 돌발 리스크 모니터링 완료.")
+                st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배) 자산 가치 검증.")
+                st.markdown(f"**🔹 기술적 분석가:** 현재 RSI {rsi:.1f}점으로 심리적 바닥 위치 추적.")
+                st.markdown(f"**🔹 리스크 관리자:** 실시간 공시 기반 펀더멘탈 훼손성 돌발 리스크 모니터링 완료.")
             with tab2:
                 st.markdown("### 🎯 실전 매수/매도 타이밍 제안")
                 st.markdown(f"#### **📊 AITAS-EQ 투자 매력도 총점: `{final_score}점 / 100점`**")
