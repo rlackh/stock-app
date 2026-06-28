@@ -7,15 +7,14 @@ import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
 
-# 1. 페이지 기본 설정 및 모니터/스마트폰 가로 폭 짤림 방지 레이아웃 최적화
+# 1. 페이지 기본 설정 및 가로 폭 짤림 방지 레이아웃 최적화
 st.set_page_config(
     page_title="AITAS-EQ 실시간 투자 전략 시스템", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
-# 💡 [컴퓨터 화면 짤림 강제 방지 CSS 주입] 
-# 모니터 해상도나 창 크기에 상관없이 표(Table)와 텍스트가 자동으로 줄바꿈되도록 강제하는 무적의 코드입니다.
+# 컴퓨터/스마트폰 화면 짤림 방지 CSS 강제 주입
 st.markdown("""
     <style>
     .stMarkdown, .stTable, div[data-testid="stMetricValue"] {
@@ -237,7 +236,7 @@ else:
 
         advanced_news = get_advanced_financial_news(stock_name, ticker_code)
         
-        # 합산 알고리즘 연산
+        # 💡 투자 매력도 총점 연산 엔진
         base_score = 50
         if rsi <= 38: base_score += 15
         if "골든크로스" in cross_signal: base_score += 15
@@ -260,12 +259,23 @@ else:
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
         col3.metric(label="20일 평균 대비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발" if vol_ratio>=1.5 else "정상")
         
-        if final_score >= 75: decision_text = "🔥 무조건 매수 (BUY)"
-        elif final_score >= 50: decision_text = "Acc. (분할매수)"
-        elif final_score >= 35: decision_text = "⚠️ 관망 (STAY)"
-        else: decision_text = "🚨 매수 금지 (SELL)"
+        # ==========================================
+        # 💡 [요청 반영] 투자자 전용 3대 결론 매칭 시스템
+        # ==========================================
+        if final_score >= 75:
+            decision_text = "🔥 강력 매수"
+            decision_delta = "5인 전문가 전원 일치 추천 바닥권"
+            opinion, strategy_text = "🔥 강력 매수", "안전마진과 차트 변곡점이 모두 융합된 최적의 바닥 타점입니다."
+        elif final_score >= 50:
+            decision_text = "✅ 분할 매수 / 모아가기"
+            decision_delta = "하방 경직성 확보, 주별 분할 접근 권장"
+            opinion, strategy_text = "✅ 분할 매수 / 모아가기", "하단 지지선을 디딤돌 삼아 장기 유동성 물량을 천천히 모아가기 좋은 구간입니다."
+        else:
+            decision_text = "🚨 매수 금지"
+            decision_delta = "리스크 관리 발동, 추가 지하실 붕괴 우려"
+            opinion, strategy_text = "🚨 매수 금지", "악재 수렴 중이거나 차트가 고점 과열 상태입니다. 현금을 쥐고 관망하십시오."
             
-        col4.metric(label="🏛️ AITAS-EQ 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
+        col4.metric(label="🏛 nighttime 투자 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
 
         st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
         left_col, right_col = st.columns([1, 1])
@@ -281,11 +291,6 @@ else:
             with tab2:
                 st.markdown("### 🎯 실전 매수/매도 타이밍 제안")
                 st.markdown(f"#### **📊 AITAS-EQ 투자 매력도 총점: `{final_score}점 / 100점`**")
-                
-                if final_score >= 75: opinion, strategy_text = "🔥 강력 매수", "안전마진과 차트 변곡점이 융합된 최적의 바닥 타점입니다."
-                elif final_score >= 50: opinion, strategy_text = "✅ 분할 매수", "하단 지지선을 디딤돌 삼아 물량을 천천히 모아가기 좋은 구간입니다."
-                elif final_score >= 35: opinion, strategy_text = "⚠️ 관망 및 보유", "주가 에너지가 응축되지 않았거나 이평선 저항이 강하므로 추격 매수를 금합니다."
-                else: opinion, strategy_text = "🚨 매수 금지", "악재가 반영 중이거나 차트가 고점 과열 상태입니다. 리스크 관리가 최우선입니다."
                 
                 st.info(f"**최종 투자 의견:** {opinion}\n\n**전략 코멘트:** {strategy_text}")
                 support_price, target_price, stop_loss = int(current_price * 0.95), int(current_price * 1.25), int(current_price * 0.90)
