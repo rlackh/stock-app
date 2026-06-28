@@ -7,7 +7,7 @@ import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
 
-# 1. 페이지 기본 설정 (컴퓨터/태블릿/스마트폰 화면 자동 최적화)
+# 1. 페이지 기본 설정 (스마트폰 및 모니터 화면 자동 최적화)
 st.set_page_config(page_title="AITAS-EQ 실시간 투자 전략 시스템", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
@@ -99,12 +99,9 @@ def find_stock_code_global(name_or_code):
     except: pass
     return None, None, None
 
-# 💡 [전면 재개조] 주말 해외 서버 차단율 0% 글로벌 실시간 뉴스 터미널 가동
 def get_advanced_financial_news(stock_name, ticker_code):
     news_list = []
     seen_titles = set()
-    
-    # 1단계 파이프라인: 글로벌 기관 매매 뉴스 피드 (야후 파이낸스)
     try:
         suffix = ".KS" if int(ticker_code) < 900000 else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
@@ -119,40 +116,25 @@ def get_advanced_financial_news(stock_name, ticker_code):
                     news_list.append({"title": f"[{publisher}] {title}", "link": link, "sent": "⚡ 기관 전용 속보"})
     except: pass
 
-    # 2단계 파이프라인: 구글 글로벌 금융 뉴스 망 연동 (해외 서버 차단 우회책)
     try:
-        # 전 세계 금융 뉴스가 동기화되는 구글 뉴스 RSS 활용
         enc_text = urllib.parse.quote(f"{stock_name} 주가 공시")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        res = requests.get(url, headers=headers, timeout=3)
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         root = ET.fromstring(res.text.encode('utf-8'))
-        
         pos_words = ['상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '실적대박', '이익']
         neg_words = ['하락', '급락', '악재', '우려', '감소', '적자', '쇼크', '이탈', '순매도']
-        
         for item in root.findall('.//item')[:5]:
             title = item.find('title').text or ""
             link = item.find('link').text or "#"
-            
-            # 구글 뉴스 특유의 신문사 이름 제거 가독성 보정 (예: "삼성전자 급등 - 연합뉴스" -> 신문사 제거)
-            if " - " in title:
-                title = title.split(" - ")[0]
-                
+            if " - " in title: title = title.split(" - ")[0]
             if title and title not in seen_titles:
                 seen_titles.add(title)
                 score = sum(1 for pw in pos_words if pw in title) - sum(1 for nw in neg_words if nw in title)
                 sent = "🟢 호재 성향" if score > 0 else ("🔴 악재 성향" if score < 0 else "⚪ 실시간 속보")
                 news_list.append({"title": title, "link": link, "sent": sent})
     except: pass
-    
-    # 3단계 파이프라인: 만약 위 두 망이 주말에 모두 막혔을 때를 대비한 최소한의 가짜 안전망 데이터
     if not news_list:
-        news_list = [
-            {"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다. ({stock_name} 금융 지표 및 수급 리포트는 상단 보드에서 실시간 정상 제공 중)", "link": "#", "sent": "📢 시스템 알림"}
-        ]
-        
+        news_list = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템 알림"}]
     return news_list
 
 # 통합 검색 엔진 가동
@@ -181,16 +163,18 @@ else:
         prev_price = int(df_chart['Close'].iloc[-2])
         price_change_percent = ((current_price - prev_price) / prev_price) * 100
         
-        df_chart['MA5'] = df_chart['Close'].rolling(window=5).mean()
-        df_chart['MA20'] = df_chart['Close'].rolling(window=20).mean()
-        df_chart['MA60'] = df_chart['Close'].rolling(window=60).mean()
-        ma5_curr, ma20_curr, ma60_curr = df_chart['MA5'].iloc[-1], df_chart['MA20'].iloc[-1], df_chart['MA60'].iloc[-1]
+        # 💡 [핵심 기술적 지표 계산 연산]
+        df_chart['5일 이동평균선'] = df_chart['Close'].rolling(window=5).mean()
+        df_chart['20일 이동평균선'] = df_chart['Close'].rolling(window=20).mean()
+        df_chart['60일 이동평균선'] = df_chart['Close'].rolling(window=60).mean()
+        
+        ma5_curr, ma20_curr, ma60_curr = df_chart['5일 이동평균선'].iloc[-1], df_chart['20일 이동평균선'].iloc[-1], df_chart['60일 이동평균선'].iloc[-1]
         
         if ma5_curr > ma20_curr > ma60_curr: chart_trend = "📈 강력 상승 정배열 상태"
         elif ma5_curr < ma20_curr < ma60_curr: chart_trend = "📉 하락 역배열 상태"
         else: chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보)"
             
-        ma5_prev, ma20_prev = df_chart['MA5'].iloc[-2], df_chart['MA20'].iloc[-2]
+        ma5_prev, ma20_prev = df_chart['5일 이동평균선'].iloc[-2], df_chart['20일 이동평균선'].iloc[-2]
         cross_signal = "🟢 특이 매수/매도 시그널 없음"
         if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: cross_signal = "🔥 골든크로스 발생! (단기 강력 매수 신호)"
         elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr: cross_signal = "🚨 데드크로스 발생!"
@@ -256,10 +240,14 @@ else:
                     st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
 
         with right_col:
-            st.markdown("### 📈 주가 흐름 및 세력(외인/기관) 수급 트렌드")
-            st.caption("🔹 최근 3개월 주가 추이")
-            st.line_chart(df_chart['Close'])
+            st.markdown("### 📈 주가 흐름 및 3대 핵심 이동평균선(MA)")
+            
+            # 💡 [이평선 차트 구현] 현재가 선과 5일, 20일, 60일 선을 하나의 맵으로 데이터 정제하여 동시 출력
+            df_ma_chart = df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'})
+            st.line_chart(df_ma_chart)
+            
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
+            
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
                 foreign_buy = df_net_buy.loc[ticker_code, '외국인합계'] / 100000000
