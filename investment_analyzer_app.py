@@ -42,15 +42,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 💡 [무적의 전 종목 한글 마스터 매핑 엔진]
-# 평일/주말/야간 상관없이 국내 상장된 모든 종목의 한글명과 코드를 실시간으로 긁어와 가상 메모리에 사전(Dictionary)으로 빌드합니다.
-@st.cache_data(ttl=14400) # 4시간 동안 데이터 메모리 유지 (속도 극대화)
+# 무적의 전 종목 한글 마스터 매핑 엔진 (4시간 가상 메모리 캐시)
+@st.cache_data(ttl=14400)
 def get_korean_stock_master_db():
     stock_dict = {}
     try:
-        # 1단계: 오늘 혹은 가장 가까운 영업일 기준 코스피/코스닥 전 종목 마스터 긁어오기
-        today_str = (datetime.utcnow() + timedelta(hours=9)).strftime("%Y%m%d")
-        
         # 코스피 전종목 한글명/코드 매핑
         kospi_stocks = stock.get_market_ticker_and_name(market="KOSPI")
         for code, name in kospi_stocks.items():
@@ -61,48 +57,42 @@ def get_korean_stock_master_db():
         for code, name in kosdaq_stocks.items():
             stock_dict[name.upper().replace(" ", "")] = {"code": code, "market": "KOSDAQ"}
     except:
-        # 백업용 초고속 마스터 맵 (서버 통신 마비 시 작동)
+        # 백업용 데이터 셋
         fallback = {
             "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
             "NAVER": "035420", "네이버": "035420", "카카오": "035720",
-            "현대차": "005380", "현대자동차": "005380", "기아": "000270", "화승엔터": "241590",
-            "SK텔레콤": "017670", "SKT": "017670", "에스케이텔레콤": "017670",
+            "현대차": "005380", "현대자동차": "005380", "기아": "000270", 
+            "SK텔레콤": "017670", "SKT": "017670", "한미반도체": "042700",
             "에코프로": "086520", "에코프로비엠": "247540", "포스코홀딩스": "005490"
         }
         for name, code in fallback.items():
             stock_dict[name.upper()] = {"code": code, "market": "KOSPI"}
-            
     return stock_dict
 
-# 마스터 DB 로드
 korean_master_db = get_korean_stock_master_db()
 
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
 
 # ==========================================
-# 2. 사이드바 - [한글 전용 개조] 종목코드 사전 및 분석 창
+# 2. 사이드바 - 종목코드 사전 및 분석 창
 # ==========================================
 st.sidebar.header("🔍 종목 분석 및 코드 검색")
-ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="005930")
+ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="042700") # 기본값을 한미반도체로 설정해 검증
 st.sidebar.markdown("---")
 st.sidebar.subheader("📖 종목코드 사전")
-search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: sk텔레콤)", value="")
+search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: 한미)", value="")
 
-# 💡 코드 사전 한글 와일드카드 실시간 검색 가동
 if search_keyword.strip():
     query_clean = search_keyword.strip().replace(" ", "").upper()
     if "에스케이" in query_clean: query_clean = query_clean.replace("에스케이", "SK")
     
     found_any = False
     st.sidebar.write("📌 **검색된 종목코드 결과:**")
-    
-    # 2,500개 전 종목 한글 마스터 사전을 돌며 글자가 포함되어 있는지 전부 찾아냅니다. (영문 짤림 완벽 우회)
     for name, info in korean_master_db.items():
         if query_clean in name:
             st.sidebar.code(f"{name} : {info['code']} ({info['market']})", language="text")
             found_any = True
-            
     if not found_any:
         st.sidebar.warning("🔍 일치하는 종목코드가 없습니다. 한글 이름을 확인해 주세요.")
 st.sidebar.markdown("---")
@@ -120,29 +110,27 @@ def find_stock_code_global(name_or_code, master_db):
     query = str(name_or_code).strip().replace(" ", "").upper()
     if "에스케이" in query: query = query.replace("에스케이", "SK")
     
-    # 1. 6자리 숫자를 직접 넣은 경우
     if query.isdigit() and len(query) == 6:
         for name, info in master_db.items():
             if info['code'] == query:
                 return query, name, info['market']
         return query, query, "KOSPI"
 
-    # 2. 한글 종목명을 넣은 경우 마스터 사전에서 즉시 6자리 코드 매핑 (영문 오타 소멸)
     if query in master_db:
         return master_db[query]['code'], name_or_code, master_db[query]['market']
         
-    # 3. 글자가 일부만 일치하는 경우 상위 매칭 검색
     for name, info in master_db.items():
         if query in name:
             return info['code'], name, info['market']
-            
     return None, None, None
 
-def get_advanced_financial_news(stock_name, ticker_code):
+# 💡 [버그 완벽 패치] 시장 분류(market_type) 주입형 뉴스 파이프라인
+def get_advanced_financial_news(stock_name, ticker_code, market_type):
     news_list = []
     seen_titles = set()
     try:
-        suffix = ".KS" if int(ticker_code) < 900000 else ".KQ"
+        # 야후 파이낸스 꼬리표를 마스터 DB에 저장된 실제 시장 데이터 기반으로 정확히 매칭 (.KS 또는 .KQ)
+        suffix = ".KS" if market_type == "KOSPI" else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
         yf_news = yf_stock.news
         if yf_news:
@@ -190,7 +178,7 @@ def get_advanced_financial_news(stock_name, ticker_code):
         classified_news = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템알림", "crisis":0, "bad":0, "opp":0}]
     return classified_news
 
-# 통합 검색 엔진 가동 (마스터 DB 동시 주입)
+# 통합 검색 엔진 가동
 ticker_code, stock_name, market_type = find_stock_code_global(ticker_input, korean_master_db)
 
 if not ticker_code:
@@ -252,7 +240,8 @@ else:
         rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
         vol_ratio = df_chart['Volume'].iloc[-1] / df_chart['Volume'].rolling(window=20).mean().iloc[-1]
 
-        advanced_news = get_advanced_financial_news(stock_name, ticker_code)
+        # 패치된 뉴스 함수 실행
+        advanced_news = get_advanced_financial_news(stock_name, ticker_code, market_type)
         
         base_score = 50
         if rsi <= 38: base_score += 15
