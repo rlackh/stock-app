@@ -14,23 +14,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 💡 [글로벌 레이아웃 짤림방지 및 자동 유연화 CSS 엔지니어링]
-# 컴퓨터 브라우저 확대 비율, 해상도, 기기 종류에 상관없이 모든 컨텐츠가 가로폭 내부로 자동 압축 정렬되게 만드는 무적의 웹 스타일입니다.
+# 컴퓨터/스마트폰 화면 짤림 방지 CSS 강제 주입
 st.markdown("""
     <style>
-    /* 전체 마크다운, 메트릭, 텍스트 요소 줄바꿈 강제 강제 */
     .stMarkdown, .stTable, div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stTabs, p, span, li {
         word-break: break-all !important;
         white-space: normal !important;
         overflow-wrap: break-word !important;
     }
-    /* 메인 화면 컨테이너 자체의 여백을 조절하여 짤림 방지 지지선 확보 */
     .block-container {
         padding-left: 2rem !important;
         padding-right: 2rem !important;
         max-width: 100% !important;
     }
-    /* 데이터 표(Table) 가로 스크롤 방지 및 폭 강제 고정 */
     table {
         width: 100% !important;
         table-layout: fixed !important;
@@ -39,7 +35,6 @@ st.markdown("""
         word-wrap: break-word !important;
         white-space: normal !important;
     }
-    /* 이평선 차트 컴포넌트가 화면 밖으로 탈출하는 현상 차단 */
     div[data-testid="stVisGlRenderer"], .stChart, div[class^="st-emotion-cache"] {
         max-width: 100% !important;
         overflow: hidden !important;
@@ -47,11 +42,46 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 💡 [무적의 전 종목 한글 마스터 매핑 엔진]
+# 평일/주말/야간 상관없이 국내 상장된 모든 종목의 한글명과 코드를 실시간으로 긁어와 가상 메모리에 사전(Dictionary)으로 빌드합니다.
+@st.cache_data(ttl=14400) # 4시간 동안 데이터 메모리 유지 (속도 극대화)
+def get_korean_stock_master_db():
+    stock_dict = {}
+    try:
+        # 1단계: 오늘 혹은 가장 가까운 영업일 기준 코스피/코스닥 전 종목 마스터 긁어오기
+        today_str = (datetime.utcnow() + timedelta(hours=9)).strftime("%Y%m%d")
+        
+        # 코스피 전종목 한글명/코드 매핑
+        kospi_stocks = stock.get_market_ticker_and_name(market="KOSPI")
+        for code, name in kospi_stocks.items():
+            stock_dict[name.upper().replace(" ", "")] = {"code": code, "market": "KOSPI"}
+            
+        # 코스닥 전종목 한글명/코드 매핑
+        kosdaq_stocks = stock.get_market_ticker_and_name(market="KOSDAQ")
+        for code, name in kosdaq_stocks.items():
+            stock_dict[name.upper().replace(" ", "")] = {"code": code, "market": "KOSDAQ"}
+    except:
+        # 백업용 초고속 마스터 맵 (서버 통신 마비 시 작동)
+        fallback = {
+            "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
+            "NAVER": "035420", "네이버": "035420", "카카오": "035720",
+            "현대차": "005380", "현대자동차": "005380", "기아": "000270", "화승엔터": "241590",
+            "SK텔레콤": "017670", "SKT": "017670", "에스케이텔레콤": "017670",
+            "에코프로": "086520", "에코프로비엠": "247540", "포스코홀딩스": "005490"
+        }
+        for name, code in fallback.items():
+            stock_dict[name.upper()] = {"code": code, "market": "KOSPI"}
+            
+    return stock_dict
+
+# 마스터 DB 로드
+korean_master_db = get_korean_stock_master_db()
+
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
 
 # ==========================================
-# 2. 사이드바 - 종목코드 사전 및 분석 창
+# 2. 사이드바 - [한글 전용 개조] 종목코드 사전 및 분석 창
 # ==========================================
 st.sidebar.header("🔍 종목 분석 및 코드 검색")
 ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="005930")
@@ -59,46 +89,22 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📖 종목코드 사전")
 search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: sk텔레콤)", value="")
 
-def get_local_heavy_db():
-    return {
-        "삼성전자": "005930", "SK하이닉스": "000660", "하이닉스": "000660",
-        "NAVER": "035420", "네이버": "035420", "카카오": "035720",
-        "현대차": "005380", "현대자동차": "005380", "기아": "000270", "셀트리온": "068270",
-        "LG에너지솔루션": "373220", "LG엔솔": "373220", "삼성바이오로직스": "207940",
-        "삼바": "207940", "삼성전자우": "005935",
-        "에코프로": "086520", "에코프로비엠": "247540", "포스코홀딩스": "005490",
-        "POSCO홀딩스": "005490", "삼성SDI": "006400", "LG화학": "051910",
-        "신한지주": "055550", "KB금융": "105560", "하나금융지주": "086790",
-        "SK텔레콤": "017670", "SKT": "017670", "에스케이텔레콤": "017670"
-    }
-
+# 💡 코드 사전 한글 와일드카드 실시간 검색 가동
 if search_keyword.strip():
     query_clean = search_keyword.strip().replace(" ", "").upper()
     if "에스케이" in query_clean: query_clean = query_clean.replace("에스케이", "SK")
+    
     found_any = False
     st.sidebar.write("📌 **검색된 종목코드 결과:**")
-    local_db = get_local_heavy_db()
-    for name, code in local_db.items():
-        if query_clean in name.upper():
-            mkt = "코스닥" if name in ["에코프로", "에코프로비엠"] else "코스피"
-            st.sidebar.code(f"{name} : {code} ({mkt})", language="text")
+    
+    # 2,500개 전 종목 한글 마스터 사전을 돌며 글자가 포함되어 있는지 전부 찾아냅니다. (영문 짤림 완벽 우회)
+    for name, info in korean_master_db.items():
+        if query_clean in name:
+            st.sidebar.code(f"{name} : {info['code']} ({info['market']})", language="text")
             found_any = True
-    try:
-        api_query = search_keyword.strip().upper()
-        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(api_query)}&quotesCount=15"
-        res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
-        if 'quotes' in res and res['quotes']:
-            for q in res['quotes']:
-                symbol = q.get('symbol', '')
-                if symbol.endswith('.KS') or symbol.endswith('.KQ'):
-                    s_code = symbol.split('.')[0]
-                    s_name = q.get('shortname', query_clean)
-                    s_market = "코스피" if symbol.endswith('.KS') else "코스닥"
-                    if s_code not in list(local_db.values()):
-                        st.sidebar.code(f"{s_name} : {s_code} ({s_market})", language="text")
-                        found_any = True
-    except: pass
-    if not found_any: st.sidebar.warning("🔍 일치하는 종목코드가 없습니다.")
+            
+    if not found_any:
+        st.sidebar.warning("🔍 일치하는 종목코드가 없습니다. 한글 이름을 확인해 주세요.")
 st.sidebar.markdown("---")
 
 def get_safe_business_day(offset=0):
@@ -110,30 +116,26 @@ def get_safe_business_day(offset=0):
     return today.strftime("%Y%m%d")
 
 @st.cache_data(ttl=60)
-def find_stock_code_global(name_or_code):
+def find_stock_code_global(name_or_code, master_db):
     query = str(name_or_code).strip().replace(" ", "").upper()
     if "에스케이" in query: query = query.replace("에스케이", "SK")
+    
+    # 1. 6자리 숫자를 직접 넣은 경우
     if query.isdigit() and len(query) == 6:
-        for suffix in [".KS", ".KQ"]:
-            try:
-                t = yf.Ticker(f"{query}{suffix}")
-                if not t.history(period="1d").empty:
-                    return query, t.info.get('shortName', query), "KOSPI" if suffix == ".KS" else "KOSDAQ"
-            except: pass
+        for name, info in master_db.items():
+            if info['code'] == query:
+                return query, name, info['market']
         return query, query, "KOSPI"
-    fallback_db = get_local_heavy_db()
-    if query in fallback_db:
-        code = fallback_db[query]
-        return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
-    try:
-        search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name_or_code.strip())}&quotesCount=10"
-        s_res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
-        if 'quotes' in s_res and s_res['quotes']:
-            for q in s_res['quotes']:
-                symbol = q.get('symbol', '')
-                if symbol.endswith('.KS') or symbol.endswith('.KQ'):
-                    return symbol.split('.')[0], q.get('shortname', query), ("KOSPI" if symbol.endswith('.KS') else "KOSDAQ")
-    except: pass
+
+    # 2. 한글 종목명을 넣은 경우 마스터 사전에서 즉시 6자리 코드 매핑 (영문 오타 소멸)
+    if query in master_db:
+        return master_db[query]['code'], name_or_code, master_db[query]['market']
+        
+    # 3. 글자가 일부만 일치하는 경우 상위 매칭 검색
+    for name, info in master_db.items():
+        if query in name:
+            return info['code'], name, info['market']
+            
     return None, None, None
 
 def get_advanced_financial_news(stock_name, ticker_code):
@@ -188,11 +190,11 @@ def get_advanced_financial_news(stock_name, ticker_code):
         classified_news = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템알림", "crisis":0, "bad":0, "opp":0}]
     return classified_news
 
-# 통합 검색 엔진 가동
-ticker_code, stock_name, market_type = find_stock_code_global(ticker_input)
+# 통합 검색 엔진 가동 (마스터 DB 동시 주입)
+ticker_code, stock_name, market_type = find_stock_code_global(ticker_input, korean_master_db)
 
 if not ticker_code:
-    st.error("❌ 종목을 찾을 수 없습니다. 정확한 종목명이나 6자리 숫자 코드를 입력해 주세요.")
+    st.error("❌ 종목을 찾을 수 없습니다. 정확한 한글 종목명이나 6자리 숫자 코드를 입력해 주세요.")
 else:
     suffix = ".KS" if market_type == "KOSPI" else ".KQ"
     yf_ticker = f"{ticker_code}{suffix}"
@@ -252,7 +254,6 @@ else:
 
         advanced_news = get_advanced_financial_news(stock_name, ticker_code)
         
-        # 투자 매력도 총점 연산 엔진
         base_score = 50
         if rsi <= 38: base_score += 15
         if "골든크로스" in cross_signal: base_score += 15
@@ -269,7 +270,6 @@ else:
         if has_crisis: base_score -= 25
         final_score = max(0, min(100, base_score))
 
-        # 메트릭 보드 출력
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(label=f"현재가 ({stock_name} / {ticker_code})", value=f"{format(current_price, ',')} 원", delta=f"{price_change_percent:.2f} %")
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
@@ -291,8 +291,6 @@ else:
         col4.metric(label="🏛️ AITAS-EQ 최종 결론", value=decision_text, delta=f"종합 점수: {final_score}점")
 
         st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
-        
-        # 좌우 반반 분할 레이아웃 실행
         left_col, right_col = st.columns([1, 1])
         
         with left_col:
@@ -320,10 +318,7 @@ else:
         with right_col:
             st.markdown("### 📈 주가 흐름 및 3대 핵심 이동평균선(MA)")
             df_ma_chart = df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'})
-            
-            # 차트 강제 가속 및 가로폭 고정 출력
             st.line_chart(df_ma_chart)
-            
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
