@@ -13,9 +13,44 @@ st.set_page_config(page_title="AITAS-EQ 실시간 투자 전략 시스템", layo
 st.title("🏛️ AITAS-EQ 실시간 개별 종목 투자 전략 시스템")
 st.markdown("텔레그램 알림 종목 또는 6자리 코드를 입력하시면, 실시간 수급·차트·뉴스 로직을 결합하여 분석합니다.")
 
-# 2. 사이드바 - 종목명 및 종목코드 통합 검색 창
-st.sidebar.header("🔍 종목 검색 및 분석 조건")
-ticker_input = st.sidebar.text_input("종목명 또는 6자리 종목코드를 입력하세요 (예: 삼성전자 또는 005930)", value="005930")
+# ==========================================
+# 2. 사이드바 - [기능 추가] 종목코드 사전 및 분석 창
+# ==========================================
+st.sidebar.header("🔍 종목 분석 및 코드 검색")
+
+# (기능 1) 실제 주식 분석을 돌릴 메인 입력창
+ticker_input = st.sidebar.text_input("💎 분석할 종목명 또는 6자리 코드", value="005930")
+
+st.sidebar.markdown("---") # 구분선
+
+# (기능 2) [신규 추가] 종목코드를 모를 때 찾는 전용 검색창
+st.sidebar.subheader("📖 종목코드 사전")
+search_keyword = st.sidebar.text_input("찾으실 종목명을 입력하세요 (예: 현대)", value="")
+
+if search_keyword.strip():
+    try:
+        # 네이버 자동완성 API를 활용하여 연관된 종목명과 코드를 모두 긁어옵니다.
+        query_enc = urllib.parse.quote(search_keyword.strip())
+        url = f"https://ac.finance.naver.com/ac?q={query_enc}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
+        
+        if res and 'items' in res and res['items'] and res['items'][0]:
+            st.sidebar.write("📌 **검색된 종목코드 결과:**")
+            # 검색 결과 리스트를 사이드바에 예쁘게 출력
+            for item in res['items'][0][:8]: # 최대 8개까지 표기
+                s_name = item[0][0]  # 종목명
+                s_code = item[1][0]  # 종목코드
+                s_market = "코스닥" if "KOSDAQ" in item[4].upper() else "코스피"
+                
+                # 사용자가 보기 편하게 버튼 형태나 텍스트로 안내
+                st.sidebar.code(f"{s_name} : {s_code} ({s_market})", language="text")
+        else:
+            st.sidebar.warning("🔍 일치하는 종목코드가 없습니다.")
+    except:
+        st.sidebar.error("❌ 코드 검색 엔진 통신 지연")
+
+st.sidebar.markdown("---")
+
 
 def get_safe_business_day(offset=0):
     """주말 및 휴장일을 피해 안전한 영업일 날짜를 계산하는 엔진"""
@@ -44,31 +79,26 @@ def load_fallback_db():
 
 @st.cache_data(ttl=60)
 def find_stock_code_global(name_or_code):
-    """[핵심 기능] 숫자가 입력되면 즉시 종목코드로 인식하고, 한글이 입력되면 코드로 상호 변환하는 무적의 검색 엔진"""
+    """숫자가 입력되면 즉시 종목코드로 인식하고, 한글이 입력되면 코드로 상호 변환하는 글로벌 엔진"""
     query = str(name_or_code).strip().replace(" ", "").upper()
     
-    # [기능 추가] 사용자가 6자리 숫자로 된 종목코드를 직접 입력한 경우
     if query.isdigit() and len(query) == 6:
-        # 코스피(.KS) 시장인지 코스닥(.KQ) 시장인지 야후 파이낸스 글로벌 서버에 즉시 질의
         for suffix in [".KS", ".KQ"]:
             try:
                 t = yf.Ticker(f"{query}{suffix}")
                 if not t.history(period="1d").empty:
-                    # 야후 검색에서 종목 한글명 혹은 영문명 추출 시도
                     stock_name = t.info.get('shortName', query)
                     market_type = "KOSPI" if suffix == ".KS" else "KOSDAQ"
                     return query, stock_name, market_type
             except:
                 pass
-        return query, query, "KOSPI"  # 판별 실패 시 기본 코스피 패스
+        return query, query, "KOSPI"
 
-    # 사용자가 한글/영문 종목명을 입력한 경우 (기존 검색 로직 유지)
     fallback_db = load_fallback_db()
     if query in fallback_db:
         code = fallback_db[query]
         return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
 
-    # 야후 파이낸스 글로벌 통합 검색 API 가동
     try:
         search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}&quotesCount=10"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -84,7 +114,6 @@ def find_stock_code_global(name_or_code):
     except:
         pass
 
-    # 네이버 자동완성 API (최종 백업)
     try:
         query_enc = urllib.parse.quote(query)
         url = f"https://ac.finance.naver.com/ac?q={query_enc}&q_enc=utf-8&st=1&frm=stock&r_format=json&r_enc=utf-8"
@@ -151,22 +180,22 @@ else:
         ma5_curr, ma20_curr, ma60_curr = df_chart['MA5'].iloc[-1], df_chart['MA20'].iloc[-1], df_chart['MA60'].iloc[-1]
         
         if ma5_curr > ma20_curr > ma60_curr:
-            chart_trend = "📈 강력 상승 정배열 상태 (정기적인 매수세 유입 중)"
+            chart_trend = "📈 강력 상승 정배열 상태"
         elif ma5_curr < ma20_curr < ma60_curr:
-            chart_trend = "📉 하락 역배열 상태 (보수적 관점 유지 필요)"
+            chart_trend = "📉 하락 역배열 상태"
         else:
-            chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보 구간)"
+            chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보)"
             
         ma5_prev, ma20_prev = df_chart['MA5'].iloc[-2], df_chart['MA20'].iloc[-2]
         cross_signal = "🟢 특이 매수/매도 시그널 없음"
         if ma5_prev <= ma20_prev and ma5_curr > ma20_curr:
             cross_signal = "🔥 골든크로스 발생! (단기 강력 매수 신호)"
         elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr:
-            cross_signal = "🚨 데드크로스 발생! (당분간 리스크 관리 권장)"
+            cross_signal = "🚨 데드크로스 발생!"
             
         high_3mo = df_chart['Close'].iloc[-60:].max()
         drop_rate = ((high_3mo - current_price) / high_3mo) * 100
-        chart_analysis_text = f" 최근 3개월 최고가({format(int(high_3mo), ',')}원) 대비 현재 주가는 **-{drop_rate:.1f}%** 조정받은 위치에 있습니다."
+        chart_analysis_text = f" 최근 3개월 최고가 대비 현재 주가는 **-{drop_rate:.1f}%** 조정받은 위치에 있습니다."
 
         per, pbr, div = 0.0, 0.0, 0.0
         try:
@@ -185,7 +214,6 @@ else:
         rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
         vol_ratio = df_chart['Volume'].iloc[-1] / df_chart['Volume'].rolling(window=20).mean().iloc[-1]
 
-        # 대시보드 화면 표기
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(label=f"현재가 ({stock_name} / {ticker_code})", value=f"{format(current_price, ',')} 원", delta=f"{price_change_percent:.2f} %")
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
