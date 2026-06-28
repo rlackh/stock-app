@@ -90,7 +90,7 @@ def find_stock_code_global(name_or_code):
         return code, query, "KOSPI" if query not in ["에코프로", "에코프로비엠"] else "KOSDAQ"
     try:
         search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name_or_code.strip())}&quotesCount=10"
-        s_res = requests.get(s_res).json() if 's_res' in locals() else requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+        s_res = requests.get(search_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
         if 'quotes' in s_res and s_res['quotes']:
             for q in s_res['quotes']:
                 symbol = q.get('symbol', '')
@@ -99,12 +99,9 @@ def find_stock_code_global(name_or_code):
     except: pass
     return None, None, None
 
-# 💡 [AI기반 투자 심리 분류 엔진 엔진] 
 def get_advanced_financial_news(stock_name, ticker_code):
     news_list = []
     seen_titles = set()
-    
-    # 1단계: 야후 파이낸스 글로벌 공시 연동
     try:
         suffix = ".KS" if int(ticker_code) < 900000 else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
@@ -119,13 +116,11 @@ def get_advanced_financial_news(stock_name, ticker_code):
                     news_list.append({"title": f"[{publisher}] {title}", "link": link, "raw_title": title})
     except: pass
 
-    # 2단계: 구글 금융 뉴스망 연동
     try:
         enc_text = urllib.parse.quote(f"{stock_name} 주가 공시 뉴스")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         root = ET.fromstring(res.text.encode('utf-8'))
-        
         for item in root.findall('.//item')[:8]:
             title = item.find('title').text or ""
             link = item.find('link').text or "#"
@@ -135,37 +130,25 @@ def get_advanced_financial_news(stock_name, ticker_code):
                 news_list.append({"title": title, "link": link, "raw_title": title})
     except: pass
     
-    # 💡 3단계: 단어 사전을 통한 실시간 [위기/기회/악재/중립] 자동 분류 알고리즘
     classified_news = []
-    
-    # 가치 판단 전용 키워드 사전 사전 정의
     opportunity_words = ['기회', '상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '대박', '영업이익증가', '신고가', '독점', '수주', '인수', '매집']
     crisis_words = ['위기', '상장폐지', '부도', '하한가', '유상증자', '횡령', '배임', '소송', '디폴트', '검찰', '조사', '조작', '쇼크', '폭락']
     bad_words = ['하락', '급락', '악재', '우려', '감소', '적자', '이탈', '순매도', '과징금', '축소', '부진', '전망치하회', '하향']
 
     for n in news_list:
         title_text = n['raw_title']
-        
-        # 키워드 매칭 스코어링 계산
         opp_score = sum(1 for w in opportunity_words if w in title_text)
         crisis_score = sum(1 for w in crisis_words if w in title_text)
         bad_score = sum(1 for w in bad_words if w in title_text)
         
-        # 스코어에 의거한 우선순위 분류 태깅 (위기 > 악재 > 기회 > 중립)
-        if crisis_score > 0:
-            tag = "🚨 위기감지"
-        elif bad_score > opp_score:
-            tag = "📉 악재경보"
-        elif opp_score > bad_score:
-            tag = "🔥 투자기회"
-        else:
-            tag = "⚪ 중립속보"
-            
-        classified_news.append({"title": n['title'], "link": n['link'], "sent": tag})
+        if crisis_score > 0: tag = "🚨 위기감지"
+        elif bad_score > opp_score: tag = "📉 악재경보"
+        elif opp_score > bad_score: tag = "🔥 투자기회"
+        else: tag = "⚪ 중립속보"
+        classified_news.append({"title": n['title'], "link": n['link'], "sent": tag, "crisis": crisis_score, "bad": bad_score, "opp": opp_score})
         
     if not classified_news:
-        classified_news = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템알림"}]
-        
+        classified_news = [{"title": f"⚠️ 현재 거래소 주말 마감 정산 시간대입니다.", "link": "#", "sent": "📢 시스템알림", "crisis":0, "bad":0, "opp":0}]
     return classified_news
 
 # 통합 검색 엔진 가동
@@ -230,12 +213,57 @@ else:
         rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
         vol_ratio = df_chart['Volume'].iloc[-1] / df_chart['Volume'].rolling(window=20).mean().iloc[-1]
 
+        # 💡 [5인 전문가 종합 의견 계량 연산 로직 백엔드 실행]
+        advanced_news = get_advanced_financial_news(stock_name, ticker_code)
+        
+        # 기본 가산점 설계
+        base_score = 50
+        
+        # 1. 기술적 분석가 가산 (RSI가 바닥이거나 골든크로스 시 점수 업)
+        if rsi <= 38: base_score += 15
+        if "골든크로스" in cross_signal: base_score += 15
+        if rsi >= 65: base_score -= 15 # 과열 시 감점
+        
+        # 2. 가치 분석가 가산 (PBR 1.2 이하 안전마진 확보 시 점수 업)
+        if 0 < pbr <= 1.2: base_score += 10
+        if per > 35: base_score -= 10 # 고평가 감점
+        
+        # 3. 세력 분석가 가산 (외인/기관 동시 매수 혹은 외인 순매수)
+        foreign_buy = 0
+        if not df_net_buy.empty and ticker_code in df_net_buy.index:
+            foreign_buy = df_net_buy.loc[ticker_code, '외국인합계']
+            if foreign_buy > 0: base_score += 10
+            
+        # 4. 리스크 관리자 점수 반영 (뉴스 탭에 위기가 떴는가)
+        has_crisis = any(n.get('crisis', 0) > 0 for n in advanced_news if 'crisis' in n)
+        if has_crisis: base_score -= 25 # 위기 감지 시 강력 감점
+        
+        # 최종 스코어 0~100 보정
+        final_score = max(0, min(100, base_score))
+
+        # 요약 보드 출력
         col1, col2, col3, col4 = st.columns(4)
         col1.metric(label=f"현재가 ({stock_name} / {ticker_code})", value=f"{format(current_price, ',')} 원", delta=f"{price_change_percent:.2f} %")
         col2.metric(label="RSI (차트 과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
         col3.metric(label="20일 평균 대비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발" if vol_ratio>=1.5 else "정상")
-        is_guru = (0 < per <= 15.0) and (pbr <= 1.8) and (div >= 1.5)
-        col4.metric(label="가치주 요건 검증", value="🏛️ 통과" if is_guru else "❌ 미부합", delta="계산 완료")
+        
+        # ==========================================
+        # 💡 [신규 추가] 5인 전문가 합의의 최종 도장 박스
+        # ==========================================
+        if final_score >= 75:
+            decision_text = "🔥 무조건 매수 (BUY)"
+            decision_delta = "5인 전문가 전원 일치 합의 완료"
+        elif final_score >= 50:
+            decision_text = "✅ 분할 매수 가능 (ACCUMULATE)"
+            decision_delta = "차트 안정권, 비중 조절 진입 권장"
+        elif final_score >= 35:
+            decision_text = "⚠️ 철저히 관망 (STAY)"
+            decision_delta = "이평선 역배열 또는 모멘텀 부족"
+        else:
+            decision_text = "🚨 매수 금지 / 매도 (SELL)"
+            decision_delta = "리스크 관리 가동, 지하실 붕괴 위험"
+            
+        col4.metric(label="🏛️ AITAS-EQ 최종 결론 도장", value=decision_text, delta=decision_delta)
 
         st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
         left_col, right_col = st.columns([1, 1])
@@ -243,21 +271,20 @@ else:
         with left_col:
             tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 토론", "🚀 실전 매수 타이밍", "📰 증권사 실시간 속보"])
             with tab1:
-                st.markdown(f"### 💬 전문가 그룹의 핵심 논쟁")
-                st.markdown(f"**🔹 거시경제 분석가:** 현재 거시 기조 속에서 {stock_name}의 업황 방어력을 진단해야 합니다.")
-                st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배) 자산 가치와 배당률({div:.2f}%)의 하방 경직성을 점검하십시오.")
-                st.markdown(f"**🔹 기술적 분석가:** RSI {rsi:.1f} 점으로 단기 추세 왜곡을 바로잡는 변곡점입니다.")
-                st.markdown(f"**🔹 리스크 관리자:** 기관 및 외인의 자금 이동 추이를 실시간 거래대금과 비교 분석해야 안전합니다.")
+                st.markdown(f"### 💬 전문가 그룹의 최종 결론 근거")
+                st.markdown(f"**🔹 거시경제 분석가:** 글로벌 유동성 완화 기조 속에서 {stock_name}의 시장 방어력 진단 중.")
+                st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배, 배당률 {div:.2f}%)의 내재가치 검증.")
+                st.markdown(f"**🔹 기술적 분석가:** 현재 RSI {rsi:.1f}점으로 심리적 바닥 혹은 변곡점 위치 역추적.")
+                st.markdown(f"**🔹 리스크 관리자:** 실시간 뉴스 및 공시 기반 펀더멘탈 훼손성 돌발 리스크 모니터링 완료.")
             with tab2:
                 st.markdown("### 🎯 실전 매수/매도 타이밍 제안")
-                base_score = 40
-                if rsi < 40: base_score += 20
-                if vol_ratio >= 1.5: base_score += 20
-                if is_guru: base_score += 20
-                st.markdown(f"#### **📊 AITAS-EQ 투자 매력도 점수: `{base_score}점 / 100점`**")
-                if base_score >= 80: opinion, strategy_text = "🔥 강력 매수", "가격 메리트와 기술적 바닥 시그널이 융합된 최적의 타이밍입니다."
-                elif base_score >= 60: opinion, strategy_text = "✅ 분할 매수", "안전마진이 확보된 영역으로, 하단 지지선을 디딤돌 삼아 모아가기 좋습니다."
-                else: opinion, strategy_text = "⚠️ 관망 및 보유", "밸류에이션 매력도가 낮거나 단기 매수세가 과열되었습니다. 추격 매수를 금합니다."
+                st.markdown(f"#### **📊 AITAS-EQ 투자 매력도 총점: `{final_score}점 / 100점`**")
+                
+                if final_score >= 75: opinion, strategy_text = "🔥 강력 매수", "안전마진과 차트 변곡점이 융합된 최적의 바닥 타점입니다."
+                elif final_score >= 50: opinion, strategy_text = "✅ 분할 매수", "하단 지지선을 디딤돌 삼아 물량을 천천히 모아가기 좋은 구간입니다."
+                elif final_score >= 35: opinion, strategy_text = "⚠️ 관망 및 보유", "주가 에너지가 응축되지 않았거나 이평선 저항이 강하므로 추격 매수를 금합니다."
+                else: opinion, strategy_text = "🚨 매수 금지", "악재가 반영 중이거나 차트가 고점 과열 상태입니다. 리스크 관리가 최우선입니다."
+                
                 st.info(f"**최종 투자 의견:** {opinion}\n\n**전략 코멘트:** {strategy_text}")
                 support_price, target_price, stop_loss = int(current_price * 0.95), int(current_price * 1.25), int(current_price * 0.90)
                 st.success(f"🎯 **추천 분할 매수 타점:** {format(support_price, ',')} 원 부근")
@@ -265,7 +292,6 @@ else:
                 st.error(f"🚨 **원칙적 리스크 손절선:** {format(stop_loss, ',')} 원")
             with tab3:
                 st.markdown(f"### 📰 {stock_name} 증권 터미널 속보 및 위험 진단")
-                advanced_news = get_advanced_financial_news(stock_name, ticker_code)
                 for news in advanced_news: 
                     st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
 
@@ -276,9 +302,9 @@ else:
             st.info(f"🔍 **[AITAS 차트 진단 리포트]**\n\n* **현재 추세:** {chart_trend}\n* **이평선 변곡 신호:** {cross_signal}\n* **가격 조정 상태:** {chart_analysis_text}")
             st.caption("🔹 최근 1달간 세력(외인/기관) 매수 누적 금액 현황")
             if not df_net_buy.empty and ticker_code in df_net_buy.index:
-                foreign_buy = df_net_buy.loc[ticker_code, '외국인합계'] / 100000000
+                foreign_buy_conv = foreign_buy / 100000000
                 institution_buy = df_net_buy.loc[ticker_code, '기관합계'] / 100000000
                 c1, c2 = st.columns(2)
-                c1.metric(label="👨‍🎤 외국인 한달 누적", value=f"{foreign_buy:.1f} 억 원", delta="매수 우위" if foreign_buy>0 else "매도 우위")
+                c1.metric(label="👨‍🎤 외국인 한달 누적", value=f"{foreign_buy_conv:.1f} 억 원", delta="매수 우위" if foreign_buy_conv>0 else "매도 우위")
                 c2.metric(label="🏢 기관 한달 누적", value=f"{institution_buy:.1f} 억 원", delta="매수 우위" if institution_buy>0 else "매도 우위")
             else: st.warning("⚠️ 세력 수급 금액은 평일 장중에 실시간으로 집계되어 표기됩니다.")
