@@ -6,11 +6,17 @@ from datetime import datetime, timedelta
 import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
+import email.utils
 import time
 
 # 1. 페이지 기본 설정 및 가로 폭 짤림 방지 레이아웃 최적화
-st.set_page_config(page_title="AITAS-EQ 실시간 투자 전략 시스템", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="AITAS-EQ 실시간 투자 전략 시스템", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
+# 화면 짤림 방지 및 반응형 마스터 디자인 CSS 주입
 st.markdown("""
     <style>
     .stMarkdown, .stTable, div[data-testid="stMetricValue"], div[data-testid="stMetricLabel"], .stTabs, p, span, li {
@@ -74,7 +80,6 @@ def get_safe_business_day(offset=0):
     return today.strftime("%Y%m%d")
 
 def analyze_stock_score(ticker_code, stock_name):
-    # 스크리너를 위한 백엔드 고속 연산 함수
     market_type = "KOSPI"
     df_chart = pd.DataFrame()
     for sfx in [".KS", ".KQ"]:
@@ -103,7 +108,6 @@ def analyze_stock_score(ticker_code, stock_name):
     up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
     rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
     
-    # 펀더멘탈 및 수급 (고속 처리를 위해 예외처리 간소화)
     safe_date = get_safe_business_day()
     per, pbr, foreign_buy = 0.0, 0.0, 0
     try:
@@ -120,10 +124,9 @@ def analyze_stock_score(ticker_code, stock_name):
             foreign_buy = df_net_buy.loc[ticker_code, '외국인합계']
     except: pass
     
-    # 간이 뉴스 감성 분석
     has_crisis = False
     try:
-        enc_text = urllib.parse.quote(f"{stock_name} 주가 악재 위기")
+        enc_text = urllib.parse.quote(f"{stock_name}")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
         root = ET.fromstring(res.text.encode('utf-8'))
@@ -135,7 +138,6 @@ def analyze_stock_score(ticker_code, stock_name):
                 break
     except: pass
     
-    # 스코어링 로직
     base_score = 50
     if rsi <= 38: base_score += 15
     if cross_signal == "골든크로스": base_score += 15
@@ -183,44 +185,127 @@ def find_stock_code_global_portal(name_or_code):
     if portal_res: return portal_res[0]['code'], portal_res[0]['name'], "KOSPI"
     return None, None, None
 
+# 💡 [초고속 개편] 구글 뉴스 RSS 시간 정밀 파이프라인
 def get_advanced_financial_news(stock_name, ticker_code, market_type):
     news_list = []
     seen_titles = set()
+    now_utc = datetime.utcnow()
+    
+    # 1. 구글 실시간 속보 수집 및 한국 시간(KST) 보정 정렬 엔진
+    try:
+        # 검색 필터 장애물을 없애고 100% 노출을 위해 '종목명' 단일 키워드로 광대역 스캔
+        enc_text = urllib.parse.quote(f"{stock_name}")
+        url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+        root = ET.fromstring(res.text.encode('utf-8'))
+        
+        for item in root.findall('.//item')[:15]: # 넉넉히 가져와서 시간 정렬 진행
+            title = item.find('title').text or ""
+            link = item.find('link').text or "#"
+            pub_date_raw = item.find('pubDate').text or ""
+            
+            # 매체 이름 불필요 구문 분리
+            if " - " in title:
+                title = title.split(" - ")[0]
+                
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                
+                # RFC 822 시간 파싱 진행
+                pub_dt = None
+                time_ago_str = ""
+                try:
+                    pub_dt = email.utils.parsedate_to_datetime(pub_date_raw)
+                    # UTC 시간 기준 비교 연산 (시간 계산 시 오차 제거)
+                    diff = now_utc.replace(tzinfo=pub_dt.tzinfo) - pub_dt
+                    diff_seconds = int(diff.total_seconds())
+                    
+                    if diff_seconds < 60:
+                        time_ago_str = "방금 전"
+                    elif diff_seconds < 3600:
+                        time_ago_str = f"{diff_seconds // 60}분 전"
+                    elif diff_seconds < 86400:
+                        time_ago_str = f"{diff_seconds // 3600}시간 전"
+                    else:
+                        time_ago_str = f"{diff_seconds // 86400}일 전"
+                except:
+                    time_ago_str = "최근속보"
+                
+                news_list.append({
+                    "title": title,
+                    "link": link,
+                    "raw_title": title,
+                    "pub_dt": pub_dt,
+                    "time_ago": time_ago_str
+                })
+    except: pass
+    
+    # 2. 야후 글로벌 수급 공시 속보 수집
     try:
         suffix = ".KS" if market_type == "KOSPI" else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
         yf_news = yf_stock.news
         if yf_news:
-            for n in yf_news[:2]:
+            for n in yf_news[:3]:
                 title = n.get('title', '')
+                link = n.get('link', '#')
+                publisher = n.get('publisher', '증권사공시')
+                publish_time_raw = n.get('providerPublishTime', 0)
+                
                 if title and title not in seen_titles:
                     seen_titles.add(title)
-                    news_list.append({"title": f"[증권속보] {title}", "link": n.get('link', '#'), "raw_title": title})
+                    pub_dt = datetime.utcfromtimestamp(publish_time_raw).replace(tzinfo=email.utils.parsedate_to_datetime(datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')).tzinfo)
+                    
+                    diff = now_utc.replace(tzinfo=pub_dt.tzinfo) - pub_dt
+                    diff_seconds = int(diff.total_seconds())
+                    
+                    if diff_seconds < 60:
+                        time_ago_str = "방금 전"
+                    elif diff_seconds < 3600:
+                        time_ago_str = f"{diff_seconds // 60}분 전"
+                    elif diff_seconds < 86400:
+                        time_ago_str = f"{diff_seconds // 3600}시간 전"
+                    else:
+                        time_ago_str = f"{diff_seconds // 86400}일 전"
+                        
+                    news_list.append({
+                        "title": f"[{publisher}] {title}",
+                        "link": link,
+                        "raw_title": title,
+                        "pub_dt": pub_dt,
+                        "time_ago": time_ago_str
+                    })
     except: pass
-    try:
-        enc_text = urllib.parse.quote(f"{stock_name} 주가 공시 뉴스")
-        url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-        root = ET.fromstring(res.text.encode('utf-8'))
-        for item in root.findall('.//item')[:8]:
-            title = item.find('title').text or ""
-            if " - " in title: title = title.split(" - ")[0]
-            if title and title not in seen_titles:
-                seen_titles.add(title)
-                news_list.append({"title": title, "link": item.find('link').text or "#", "raw_title": title})
-    except: pass
+
+    # 3. 수집된 모든 뉴스를 최신 분/초 시간 내림차순 정렬 (진짜 최신 뉴스 상단 고정!)
+    news_list.sort(key=lambda x: x['pub_dt'] if x['pub_dt'] is not None else datetime.min.replace(tzinfo=email.utils.parsedate_to_datetime(datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')).tzinfo), reverse=True)
     
+    # 4. 실시간 가치 분류(위기, 기회, 악재, 중립) 태깅 고속 처리
     classified_news = []
-    for n in news_list:
-        tt = n['raw_title']
-        opp_score = sum(1 for w in ['기회', '상승', '돌파', '급등', '호재', '수주'] if w in tt)
-        crisis_score = sum(1 for w in ['위기', '상장폐지', '부도', '횡령', '배임', '소송'] if w in tt)
-        bad_score = sum(1 for w in ['하락', '급락', '악재', '우려', '감소', '적자'] if w in tt)
+    opportunity_words = ['기회', '상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '대박', '영업이익증가', '신고가', '독점', '수주', '인수', '매집', '성장', '출시', '개발', '상향']
+    crisis_words = ['위기', '상장폐지', '부도', '하한가', '유상증자', '횡령', '배임', '소송', '디폴트', '검찰', '조사', '조작', '쇼크', '폭락', '수사']
+    bad_words = ['하락', '급락', '악재', '우려', '감소', '적자', '이탈', '순매도', '과징금', '축소', '부진', '전망치하회', '하향']
+
+    for n in news_list[:8]: # 상위 최신 8개 뉴스만 노출
+        title_text = n['raw_title']
+        opp_score = sum(1 for w in opportunity_words if w in title_text)
+        crisis_score = sum(1 for w in crisis_words if w in title_text)
+        bad_score = sum(1 for w in bad_words if w in title_text)
+        
         if crisis_score > 0: tag = "🚨 위기감지"
         elif bad_score > opp_score: tag = "📉 악재경보"
         elif opp_score > bad_score: tag = "🔥 투자기회"
         else: tag = "⚪ 중립속보"
-        classified_news.append({"title": n['title'], "link": n['link'], "sent": tag})
+        
+        # 제목 우측에 (방금 전, 10분 전) 시간 꼬리표 부착
+        classified_news.append({
+            "title": f"{n['title']} ({n['time_ago']})",
+            "link": n['link'],
+            "sent": tag
+        })
+        
+    if not classified_news:
+        classified_news = [{"title": "⚠️ 실시간 파악된 최신 뉴스가 없습니다. 잠시 후 새로고침 해주세요.", "link": "#", "sent": "📢 시스템알림"}]
     return classified_news
 
 # ==========================================
