@@ -5,7 +5,6 @@ import pandas as pd
 import yfinance as yf
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from pykrx import stock  # 💡 pykrx 추가 (머니터링 가치투자 지표 융합용)
 
 # 텔레그램 보안 설정값 (깃허브 Secrets 환경변수 연동)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -37,25 +36,51 @@ def get_top_tickers():
             pass
     return candidates
 
-def get_brokerage_consensus(code):
-    """네이버 증권에서 해당 종목의 증권사 목표가 및 투자의견 점수를 수집합니다."""
+def get_naver_details(code):
+    """네이버 증권에서 해당 종목의 증권사 목표가, 투자의견 점수, PER, PBR, 배당수익률을 실시간 수집합니다."""
     url = f"https://finance.naver.com/item/main.naver?code={code}"
     headers = {'User-Agent': 'Mozilla/5.0'}
+    target_price = 0
+    opinion_score = 0.0
+    per = 0.0
+    pbr = 0.0
+    div = 0.0
     try:
         res = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(res.text, 'html.parser')
-        target_price = 0
+        
+        # 1. 증권사 목표가 추출
         cns_div = soup.find('div', class_='r_cns')
         if cns_div and cns_div.find('em'):
             target_price = int(cns_div.find('em').text.replace(',', ''))
-        opinion_score = 0.0
+        
+        # 2. 투자의견 점수 추출
         opinion_td = soup.select_one('table.r_cns_table td.num')
         if opinion_td:
             try: opinion_score = float(opinion_td.text.strip())
             except: pass
-        return target_price, opinion_score
-    except:
-        return 0, 0.0
+            
+        # 3. PER 추출 (id="_per")
+        per_em = soup.find('em', id='_per')
+        if per_em:
+            try: per = float(per_em.text.replace(',', '').strip())
+            except: pass
+            
+        # 4. PBR 추출 (id="_pbr")
+        pbr_em = soup.find('em', id='_pbr')
+        if pbr_em:
+            try: pbr = float(pbr_em.text.replace(',', '').strip())
+            except: pass
+            
+        # 5. 배당수익률 추출 (id="_dvd")
+        dvd_em = soup.find('em', id='_dvd')
+        if dvd_em:
+            try: div = float(dvd_em.text.replace(',', '').replace('%', '').strip())
+            except: pass
+    except Exception as e:
+        print(f"네이버 상세 데이터 추출 실패 ({code}): {e}")
+        
+    return target_price, opinion_score, per, pbr, div
 
 def calculate_rsi(series, period=14):
     """지정된 기간(기본 14일) 동안의 RSI(상대강도지수)를 연산합니다."""
@@ -67,33 +92,11 @@ def calculate_rsi(series, period=14):
     rs = ema_up / ema_down
     return 100 - (100 / (1 + rs))
 
-def get_latest_biz_day():
-    """가장 최근에 장이 열렸던 영업일을 찾아 반환합니다 (pykrx 연동용)"""
-    today = datetime.utcnow() + timedelta(hours=9)
-    if today.hour < 16:
-        today -= timedelta(days=1)
-    for i in range(5):
-        d = today - timedelta(days=i)
-        if d.weekday() < 5:
-            date_str = d.strftime("%Y%m%d")
-            try:
-                df = stock.get_market_fundamental(date_str, market="KOSPI")
-                if not df.empty: return date_str
-            except: pass
-    return today.strftime("%Y%m%d")
-
 def run_master_quant_strategy():
     """추세, 수급, 증권사 합의, 대가의 재무 분석 지표를 결합한 종합 퀀트 전략을 실행합니다."""
     all_candidates = get_top_tickers()
     if not all_candidates:
         return "네이버 명단수집 실패", None
-
-    # 💡 [추가] 머니터링(대가의 가치투자) 펀더멘탈 데이터 한 번에 가져오기
-    biz_day = get_latest_biz_day()
-    try:
-        df_fund = stock.get_market_fundamental(biz_day, market="ALL")
-    except:
-        df_fund = pd.DataFrame()
 
     survivors = []
     for code, name, suffix in all_candidates:
@@ -101,7 +104,7 @@ def run_master_quant_strategy():
             ticker_symbol = f"{code}{suffix}"
             df = yf.Ticker(ticker_symbol).history(period="3mo")
             
-            # 💡 [핵심 수정] 야후 파이낸스의 '빈칸 버그'를 완벽하게 청소합니다.
+            # 야후 파이낸스의 '빈칸 버그'를 완벽하게 청소합니다.
             df = df.dropna()
             if len(df) < 30: continue
                 
@@ -132,22 +135,10 @@ def run_master_quant_strategy():
             elif vol_ratio >= 1.2: volume_score += 15
 
             if chart_score + volume_score >= 15:
-                # 💡 [추가] 머니터링 가치투자 지표 추출 및 검증
-                per, pbr, div = 0.0, 0.0, 0.0
-                is_guru = False
-                if not df_fund.empty and code in df_fund.index:
-                    per = df_fund.loc[code, 'PER']
-                    pbr = df_fund.loc[code, 'PBR']
-                    div = df_fund.loc[code, 'DIV']
-                    # 워런 버핏 & 그레이엄 조건 만족 여부 검사
-                    if (0 < per <= 10.0) and (pbr <= 1.0) and (div >= 3.5):
-                        is_guru = True
-
                 survivors.append({
                     'code': code, 'name': name, 'price': current_price,
                     'rsi': rsi, 'vol_ratio': vol_ratio,
-                    'base_score': chart_score + volume_score,
-                    'per': per, 'pbr': pbr, 'div': div, 'is_guru': is_guru
+                    'base_score': chart_score + volume_score
                 })
         except:
             continue
@@ -157,7 +148,13 @@ def run_master_quant_strategy():
 
     scored_stocks = []
     for cand in survivors:
-        target_price, opinion_score = get_brokerage_consensus(cand['code'])
+        # 네이버 금융에서 목표가, 투자의견 점수, PER, PBR, 배당수익률 실시간 일괄 수집
+        target_price, opinion_score, per, pbr, div = get_naver_details(cand['code'])
+        
+        # 워런 버핏 & 그레이엄 조건 만족 여부 검사 (가치투자 밸류에이션)
+        is_guru = False
+        if (0 < per <= 10.0) and (0 < pbr <= 1.0) and (div >= 3.5):
+            is_guru = True
         
         consensus_score = 0
         upside = 0.0
@@ -168,8 +165,8 @@ def run_master_quant_strategy():
         if opinion_score >= 4.0: consensus_score += 15
         elif opinion_score >= 3.6: consensus_score += 10
             
-        # 💡 [추가] 머니터링 가치투자 조건 달성 시 +20점 초특급 가산점
-        guru_score = 20 if cand['is_guru'] else 0
+        # 머니터링 가치투자 조건 만족 시 특별 가산점 부여
+        guru_score = 20 if is_guru else 0
         total_score = cand['base_score'] + consensus_score + guru_score
         
         # 안전하게 수집된 종목을 결과에 담습니다
@@ -178,7 +175,7 @@ def run_master_quant_strategy():
             'target': target_price, 'upside': round(upside, 1) if target_price > 0 else 0,
             'opinion': opinion_score, 'vol_ratio': round(cand['vol_ratio'], 1),
             'rsi': round(cand['rsi'], 1), 'score': total_score,
-            'per': cand['per'], 'pbr': cand['pbr'], 'div': cand['div'], 'is_guru': cand['is_guru']
+            'per': per, 'pbr': pbr, 'div': div, 'is_guru': is_guru
         })
 
     if scored_stocks:
@@ -212,13 +209,13 @@ if df_picks is not None and not df_picks.empty:
         t_str = format(row['target'], ',') if row['target'] > 0 else "측정불가"
         up_str = f"+{row['upside']}%" if row['target'] > 0 else "-"
         
-        # 💡 [추가] 머니터링 통과 시 특별 뱃지 부여
+        # 머니터링 통과 시 특별 뱃지 부여
         guru_badge = " 🏛️[머니터링 가치주]" if row['is_guru'] else ""
         
         msg += f"{rank}위. {row['name']} ({p_str}원) - 💯 {row['score']}점{guru_badge}\n"
         msg += f"  ▪ 증권사 목표가: {t_str}원 (상승여력: {up_str})\n"
         msg += f"  ▪ 수급(거래량): {row['vol_ratio']}배 / 차트(RSI): {row['rsi']}\n"
-        # 💡 [추가] 재무 지표도 브리핑에 포함
+        # 재무 지표 브리핑
         msg += f"  ▪ 재무가치: PER {row['per']}배 / PBR {row['pbr']}배 / 배당 {row['div']}%\n\n"
 else:
     msg = f"🌟 [마스터 퀀트 브리핑]\n({now} 기준)\n\n분석 오류 ({status}). 잠시 후 다시 시도해 주세요."
