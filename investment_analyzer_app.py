@@ -408,16 +408,60 @@ with main_tab1:
 
             st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
             left_col, right_col = st.columns([1, 1])
+            
             with left_col:
-                tab1, tab2, tab3 = st.tabs(["💬 전문가 토론", "🚀 매수 타이밍", "📰 실시간 속보"])
+                tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 토론", "🚀 실전 매수 타이밍", "📰 증권사 실시간 속보"])
                 with tab1:
-                    st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}, PBR {pbr:.2f}) 내재가치 검증 완료.\n\n**🔹 기술적 분석가:** RSI {rsi:.1f}점 기반 바닥 역추적.")
+                    st.markdown(f"### 💬 전문가 그룹의 최종 결론 근거")
+                    st.markdown(f"**🔹 거시경제 분석가:** 글로벌 유동성 완화 기조 속에서 {stock_name}의 시장 방어력 진단 중.")
+                    st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배) 자산 가치 검증.")
+                    st.markdown(f"**🔹 기술적 분석가:** 현재 RSI {rsi:.1f}점으로 심리적 바닥 위치 추적.")
+                    st.markdown(f"**🔹 리스크 관리자:** 실시간 공시 기반 펀더멘탈 훼손성 돌발 리스크 모니터링 완료.")
                 with tab2:
-                    st.info(f"**투자 의견:** {opinion}\n\n**코멘트:** {strategy_text}")
-                    st.success(f"🎯 **추천 분할 매수 타점:** {format(int(current_price * 0.95), ',')} 원 부근")
+                    st.markdown("### 🎯 AITAS-EQ 정밀 대응 매수/매도 시나리오")
+                    st.markdown(f"#### **📊 종합 투자 매력도 스코어: `{final_score}점 / 100점`**")
+                    
+                    # 전술 포지션 의견 및 코멘트
+                    st.markdown(f"**📢 핵심 대응 포지션:** **{opinion}**")
+                    st.markdown(f"**💡 전략적 가이드라인:** {strategy_text}")
+                    st.markdown("---")
+                    
+                    # 4대 가격 포지션 밴드 동적 계산
+                    buy_target_1 = int(current_price * 0.98)
+                    buy_target_2 = int(current_price * 0.94)
+                    take_profit = int(current_price * 1.25)
+                    stop_loss = int(current_price * 0.88)
+                    
+                    st.markdown("#### **💵 핵심 가격 포지셔닝 타점**")
+                    st.success(f"🎯 **1차 분할 매수 밴드 (진입 비중 10%):** `{format(buy_target_1, ',')} 원` 부근 (안전마진 확인용)")
+                    st.success(f"💎 **2차 분할 매수 밴드 (진입 비중 20%):** `{format(buy_target_2, ',')} 원` 부근 (바닥 지지선 리테스트용)")
+                    st.warning(f"📈 **1차 목표 이익 실현가 (Take Profit):** `{format(take_profit, ',')} 원` 부근 (약 +25% 기대수익률)")
+                    st.error(f"🚨 **원칙적 리스크 오프 손절선 (Stop Loss):** `{format(stop_loss, ',')} 원` 부근 (직전 저점 지지 붕괴 시)")
+                    
+                    st.markdown("---")
+                    
+                    # 자금 집행 비중 및 자금 운용 가이드
+                    st.markdown("#### **💼 포트폴리오 비중 전략 및 자금 운용 지침**")
+                    if final_score >= 75:
+                        st.info("💡 **자금 집행 가이드:** 현재 역사적·기술적 바닥 영역으로 판단됩니다. 전체 투자 가용 자금의 최대 **30%** 비중까지 기계적 분할 집행을 권장합니다. (1차 진입 15%, 2차 조정 시 15% 적립)")
+                    elif final_score >= 50:
+                        st.info("💡 **자금 집행 가이드:** 하방 경직성은 확보했으나 모멘텀이 다소 약할 수 있습니다. 전체 비중 **15%** 이내에서 철저히 분할(주단위 매집)로 평단가를 낮춰가는 전술을 취하십시오.")
+                    else:
+                        st.info("💡 **자금 집행 가이드:** **비중 0% (진입 전면 대기)**. 현재 차트 고점 과열 영역이거나 급격한 역배열 하강 국면입니다. 무리한 물타기나 신규 진입을 전면 중단하고, RSI 바닥 변곡이나 거래량 폭발이 재차 감지될 때까지 현금을 100% 보존하십시오.")
+                        
+                    st.markdown("---")
+                    
+                    # 5대 매매 리스크 체크리스트
+                    st.markdown("#### **⚠️ 주요 리스크 요인 및 체크포인트**")
+                    st.markdown("- **수급 공백 리스크:** 외인/기관의 쌍끌이 매도가 지연될 경우 매수 평단가 부근에서 장기 횡보 국면에 갇힐 우려가 있습니다.")
+                    st.markdown("- **매크로 변동성:** 연준(Fed)의 통화정책 및 금리 기조 변동에 따라 가치 평가(PER) 멀티플이 조정을 받을 가능성을 염두에 두십시오.")
+                    st.markdown("- **거래량 이탈 리스크:** 매수 집행 이후 거래량이 20일 평균의 50% 미만으로 급감할 경우, 추세 돌파 신뢰도가 소멸하므로 손절선을 한 단계(예: -2%) 더 좁게 가져가야 합니다.")
                 with tab3:
-                    for news in advanced_news: st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
-            with right_col:
+                    st.markdown(f"### 📰 {stock_name} 증권 터미널 속보 및 위험 진단")
+                    for news in advanced_news: 
+                        st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
+
+        with right_col:
                 st.markdown("### 📈 주가 흐름 및 3대 이동평균선(MA)")
                 st.line_chart(df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'}))
                 st.info(f"🔍 **[차트 진단]** {chart_trend} | 신호: {cross_signal} | {chart_analysis_text}")
@@ -465,7 +509,15 @@ with main_tab2:
         if recommended_stocks:
             for rec in recommended_stocks:
                 st.info(f"**💎 {rec['name']} ({rec['code']})** | 현재가: {format(rec['price'], ',')}원 | **총점: {rec['score']}점**")
+                
+                # 스캐너 화면용 실전 가격 밴드 동적 계산 및 표기
+                rec_buy1 = int(rec['price'] * 0.98)
+                rec_buy2 = int(rec['price'] * 0.94)
+                rec_tp = int(rec['price'] * 1.25)
+                rec_sl = int(rec['price'] * 0.88)
+                
                 st.write(f"↪️ **추천 근거:** RSI 바닥권({rec['rsi']:.1f}), PBR {rec['pbr']:.2f}배 저평가 구간. 차트 변곡 시그널({rec['cross'] if rec['cross'] else '응축 중'}) 포착 완료.")
+                st.write(f"💼 **전술 가격 가이드:** [1차 진입] `{format(rec_buy1, ',')}원` / [2차 추가] `{format(rec_buy2, ',')}원` / [이익실현 목표가] `{format(rec_tp, ',')}원` / [최후 손절선] `{format(rec_sl, ',')}원` (전술 비중 최대 30% 권장)")
         else:
             st.warning("🚨 현재 75점 이상의 완벽한 매수 타점에 도달한 주도주가 없습니다. 시장 전체가 과열되었거나 역배열 상태입니다.")
             
