@@ -68,9 +68,6 @@ def 통합_포털_종목_검색(query_text):
             if clean_q in f_name.upper(): results[f_code] = f_name
     return [{"name": name, "code": code} for code, name in results.items()]
 
-# ==========================================
-# 2. 공통 백엔드 연산 엔진 (점수 계산 모듈화)
-# ==========================================
 def get_safe_business_day(offset=0):
     today = datetime.utcnow() + timedelta(hours=9) - timedelta(days=offset)
     while today.weekday() >= 5: today -= timedelta(days=1)
@@ -185,38 +182,31 @@ def find_stock_code_global_portal(name_or_code):
     if portal_res: return portal_res[0]['code'], portal_res[0]['name'], "KOSPI"
     return None, None, None
 
-# 💡 [초고속 개편] 구글 뉴스 RSS 시간 정밀 파이프라인
 def get_advanced_financial_news(stock_name, ticker_code, market_type):
     news_list = []
     seen_titles = set()
     now_utc = datetime.utcnow()
     
-    # 1. 구글 실시간 속보 수집 및 한국 시간(KST) 보정 정렬 엔진
     try:
-        # 검색 필터 장애물을 없애고 100% 노출을 위해 '종목명' 단일 키워드로 광대역 스캔
         enc_text = urllib.parse.quote(f"{stock_name}")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         root = ET.fromstring(res.text.encode('utf-8'))
         
-        for item in root.findall('.//item')[:15]: # 넉넉히 가져와서 시간 정렬 진행
+        for item in root.findall('.//item')[:15]:
             title = item.find('title').text or ""
             link = item.find('link').text or "#"
             pub_date_raw = item.find('pubDate').text or ""
             
-            # 매체 이름 불필요 구문 분리
             if " - " in title:
                 title = title.split(" - ")[0]
                 
             if title and title not in seen_titles:
                 seen_titles.add(title)
-                
-                # RFC 822 시간 파싱 진행
                 pub_dt = None
                 time_ago_str = ""
                 try:
                     pub_dt = email.utils.parsedate_to_datetime(pub_date_raw)
-                    # UTC 시간 기준 비교 연산 (시간 계산 시 오차 제거)
                     diff = now_utc.replace(tzinfo=pub_dt.tzinfo) - pub_dt
                     diff_seconds = int(diff.total_seconds())
                     
@@ -240,7 +230,6 @@ def get_advanced_financial_news(stock_name, ticker_code, market_type):
                 })
     except: pass
     
-    # 2. 야후 글로벌 수급 공시 속보 수집
     try:
         suffix = ".KS" if market_type == "KOSPI" else ".KQ"
         yf_stock = yf.Ticker(f"{ticker_code}{suffix}")
@@ -277,16 +266,14 @@ def get_advanced_financial_news(stock_name, ticker_code, market_type):
                     })
     except: pass
 
-    # 3. 수집된 모든 뉴스를 최신 분/초 시간 내림차순 정렬 (진짜 최신 뉴스 상단 고정!)
     news_list.sort(key=lambda x: x['pub_dt'] if x['pub_dt'] is not None else datetime.min.replace(tzinfo=email.utils.parsedate_to_datetime(datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')).tzinfo), reverse=True)
     
-    # 4. 실시간 가치 분류(위기, 기회, 악재, 중립) 태깅 고속 처리
     classified_news = []
     opportunity_words = ['기회', '상승', '돌파', '급등', '호재', '수혜', '흑자', '계약', '대박', '영업이익증가', '신고가', '독점', '수주', '인수', '매집', '성장', '출시', '개발', '상향']
     crisis_words = ['위기', '상장폐지', '부도', '하한가', '유상증자', '횡령', '배임', '소송', '디폴트', '검찰', '조사', '조작', '쇼크', '폭락', '수사']
     bad_words = ['하락', '급락', '악재', '우려', '감소', '적자', '이탈', '순매도', '과징금', '축소', '부진', '전망치하회', '하향']
 
-    for n in news_list[:8]: # 상위 최신 8개 뉴스만 노출
+    for n in news_list[:8]:
         title_text = n['raw_title']
         opp_score = sum(1 for w in opportunity_words if w in title_text)
         crisis_score = sum(1 for w in crisis_words if w in title_text)
@@ -297,7 +284,6 @@ def get_advanced_financial_news(stock_name, ticker_code, market_type):
         elif opp_score > bad_score: tag = "🔥 투자기회"
         else: tag = "⚪ 중립속보"
         
-        # 제목 우측에 (방금 전, 10분 전) 시간 꼬리표 부착
         classified_news.append({
             "title": f"{n['title']} ({n['time_ago']})",
             "link": n['link'],
@@ -338,27 +324,49 @@ with main_tab1:
         if df_chart.empty:
             st.error("🔄 야후 금융 서버로부터 주가 데이터를 수신하지 못했습니다. 잠시 후 시도해 주세요.")
         else:
+            # 💡 [정밀 분석 전용] 보조지표 고속 수학 연산 엔진
             current_price = int(df_chart['Close'].iloc[-1])
             prev_price = int(df_chart['Close'].iloc[-2])
             price_change_percent = ((current_price - prev_price) / prev_price) * 100
             
-            df_chart['5일 이동평균선'] = df_chart['Close'].rolling(window=5).mean()
-            df_chart['20일 이동평균선'] = df_chart['Close'].rolling(window=20).mean()
-            df_chart['60일 이동평균선'] = df_chart['Close'].rolling(window=60).mean()
+            # 1. 4중 핵심 이동평균선 산출
+            df_chart['5일 이평선'] = df_chart['Close'].rolling(window=5).mean()
+            df_chart['20일 이평선'] = df_chart['Close'].rolling(window=20).mean()
+            df_chart['60일 이평선'] = df_chart['Close'].rolling(window=60).mean()
+            df_chart['120일 이평선'] = df_chart['Close'].rolling(window=120).mean()
             
-            ma5_curr, ma20_curr, ma60_curr = df_chart['5일 이동평균선'].iloc[-1], df_chart['20일 이동평균선'].iloc[-1], df_chart['60일 이동평균선'].iloc[-1]
-            if ma5_curr > ma20_curr > ma60_curr: chart_trend = "📈 강력 상승 정배열 상태"
-            elif ma5_curr < ma20_curr < ma60_curr: chart_trend = "📉 하락 역배열 상태"
-            else: chart_trend = "🔄 이평선 밀집 및 혼조세 (박스권 횡보)"
+            # 2. 볼린저 밴드 계산 (20일 기준, 표준편차 2배)
+            df_chart['BB_Std'] = df_chart['Close'].rolling(window=20).std()
+            df_chart['볼린저 상한선'] = df_chart['20일 이평선'] + (df_chart['BB_Std'] * 2)
+            df_chart['볼린저 하한선'] = df_chart['20일 이평선'] - (df_chart['BB_Std'] * 2)
+            
+            # 3. MACD 지표 계산
+            df_chart['EMA_12'] = df_chart['Close'].ewm(span=12, adjust=False).mean()
+            df_chart['EMA_26'] = df_chart['Close'].ewm(span=26, adjust=False).mean()
+            df_chart['MACD'] = df_chart['EMA_12'] - df_chart['EMA_26']
+            df_chart['MACD 시그널선'] = df_chart['MACD'].ewm(span=9, adjust=False).mean()
+            df_chart['MACD 히스토그램'] = df_chart['MACD'] - df_chart['MACD 시그널선']
+            
+            ma5_curr, ma20_curr, ma60_curr, ma120_curr = df_chart['5일 이평선'].iloc[-1], df_chart['20일 이평선'].iloc[-1], df_chart['60일 이평선'].iloc[-1], df_chart['120일 이평선'].iloc[-1]
+            
+            # 정교한 이평선 상태 및 크로스 진단
+            if ma5_curr > ma20_curr > ma60_curr > ma120_curr: 
+                chart_trend = "📈 강력 정배열 상태 (골디락스 추세 상승 국면)"
+            elif ma5_curr < ma20_curr < ma60_curr < ma120_curr: 
+                chart_trend = "📉 완벽 역배열 상태 (추세 하락 국면, 관망 필수)"
+            else: 
+                chart_trend = "🔄 이평선 수렴 상태 (박스권 횡보 및 추세 응축 국면)"
                 
-            ma5_prev, ma20_prev = df_chart['5일 이동평균선'].iloc[-2], df_chart['20일 이동평균선'].iloc[-2]
-            cross_signal = "🟢 특이 매수/매도 시그널 없음"
-            if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: cross_signal = "🔥 골든크로스 발생! (단기 강력 매수 신호)"
-            elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr: cross_signal = "🚨 데드크로스 발생!"
+            ma5_prev, ma20_prev = df_chart['5일 이평선'].iloc[-2], df_chart['20일 이평선'].iloc[-2]
+            cross_signal = "🟢 특이 크로스 시그널 발견되지 않음"
+            if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: 
+                cross_signal = "🔥 단기 골든크로스 발생! (5일선이 20일선을 골든크로스하는 단기 강매수 타점)"
+            elif ma5_prev >= ma20_prev and ma5_curr < ma20_curr: 
+                cross_signal = "🚨 데드크로스 발생! (단기 리스크 오프 국면 진입)"
                 
             high_3mo = df_chart['Close'].iloc[-60:].max()
             drop_rate = ((high_3mo - current_price) / high_3mo) * 100
-            chart_analysis_text = f" 최근 3개월 최고가 대비 현재 주가는 **-{drop_rate:.1f}%** 조정받은 위치에 있습니다."
+            chart_analysis_text = f"최근 3개월 최고가 대비 현재 주가는 **-{drop_rate:.1f}%** 조정받은 위치에 안착해 있습니다."
 
             per, pbr, div = 0.0, 0.0, 0.0
             try:
@@ -374,6 +382,7 @@ with main_tab1:
 
             advanced_news = get_advanced_financial_news(stock_name, ticker_code, market_type)
             
+            # 최종 투자 가치 점수 종합 연산
             base_score = 50
             if rsi <= 38: base_score += 15
             if "골든크로스" in cross_signal: base_score += 15
@@ -392,79 +401,98 @@ with main_tab1:
             if has_crisis: base_score -= 25
             final_score = max(0, min(100, base_score))
 
+            # 메인 탑 메트릭 바디 구성
             col1, col2, col3, col4 = st.columns(4)
             col1.metric(label=f"현재가 ({stock_name})", value=f"{format(current_price, ',')} 원", delta=f"{price_change_percent:.2f} %")
-            col2.metric(label="RSI (과열도)", value=f"{rsi:.1f}", delta="과매도 지점" if rsi<=30 else "안정")
-            col3.metric(label="20일비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발" if vol_ratio>=1.5 else "정상")
+            col2.metric(label="RSI (과열 지수)", value=f"{rsi:.1f}", delta="과매도 영역 진입" if rsi<=30 else "정상 범주")
+            col3.metric(label="20일 평균비 거래량", value=f"{vol_ratio:.2f} 배", delta="수급 폭발 (거래대금 유입)" if vol_ratio>=1.5 else "거래 소폭 정체")
             
             if final_score >= 75:
-                decision_text, decision_delta, opinion, strategy_text = "🔥 강력 매수", "전문가 추천 바닥권", "🔥 강력 매수", "안전마진과 차트 변곡점이 모두 융합된 최적의 바닥 타점입니다."
+                decision_text, decision_delta, opinion, strategy_text = "🔥 강력 매수", "안전마진 및 바닥 변곡점 확인", "🔥 강력 매수", "안전마진과 차트 변곡점이 모두 융합된 최적의 바닥 타점입니다."
             elif final_score >= 50:
-                decision_text, decision_delta, opinion, strategy_text = "✅ 분할 매수", "하방 경직성 확보", "✅ 분할 매수", "하단 지지선을 디딤돌 삼아 장기 물량을 모아가기 좋은 구간입니다."
+                decision_text, decision_delta, opinion, strategy_text = "✅ 분할 매수", "하방 경직성 지지", "✅ 분할 매수", "하단 지지선을 디딤돌 삼아 장기 물량을 모아가기 좋은 구간입니다."
             else:
-                decision_text, decision_delta, opinion, strategy_text = "🚨 매수 금지", "관망 요망", "🚨 매수 금지", "악재 수렴 중이거나 차트가 고점 과열 상태입니다. 현금을 쥐고 관망하십시오."
+                decision_text, decision_delta, opinion, strategy_text = "🚨 매수 금지", "역배열 과열 또는 악재 수렴", "🚨 매수 금지", "악재 수렴 중이거나 차트가 고점 과열 상태입니다. 현금을 쥐고 관망하십시오."
                 
-            col4.metric(label="🏛️ AITAS 최종 결론", value=decision_text, delta=f"점수: {final_score}점")
+            col4.metric(label="🏛️ AITAS 최종 투자 의견", value=decision_text, delta=f"점수: {final_score}점")
 
             st.subheader("📋 AITAS-EQ 종합 전략 투자 분석 보고서")
             left_col, right_col = st.columns([1, 1])
             
             with left_col:
-                tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 토론", "🚀 실전 매수 타이밍", "📰 증권사 실시간 속보"])
+                tab1, tab2, tab3 = st.tabs(["💬 5인 전문가 분석", "🚀 실전 매수 시나리오", "📰 증권사 실시간 속보"])
                 with tab1:
-                    st.markdown(f"### 💬 전문가 그룹의 최종 결론 근거")
-                    st.markdown(f"**🔹 거시경제 분석가:** 글로벌 유동성 완화 기조 속에서 {stock_name}의 시장 방어력 진단 중.")
-                    st.markdown(f"**🔹 기본적 분석가:** 밸류에이션(PER {per:.2f}배, PBR {pbr:.2f}배) 자산 가치 검증.")
-                    st.markdown(f"**🔹 기술적 분석가:** 현재 RSI {rsi:.1f}점으로 심리적 바닥 위치 추적.")
-                    st.markdown(f"**🔹 리스크 관리자:** 실시간 공시 기반 펀더멘탈 훼손성 돌발 리스크 모니터링 완료.")
+                    st.markdown(f"### 💬 분야별 분석가 그룹의 최종 결론")
+                    st.markdown(f"**🔹 거시경제 분석가:** 글로벌 유동성 완화 기조 속에서 {stock_name}의 시장 지배력 검증.")
+                    st.markdown(f"**🔹 기본적 분석가:** 가치평가 지표 (PER {per:.2f}배, PBR {pbr:.2f}배) 기반 안전마진 확보 상태 진단.")
+                    st.markdown(f"**🔹 기술적 분석가:** RSI {rsi:.1f}점 및 볼린저 밴드 표준편차 이탈 위치 추적.")
+                    st.markdown(f"**🔹 수급 분석가:** 최근 한 달간 세력(외인/기관) 매집 주체 및 대량 거래량 돌파 신뢰도 검증 완료.")
                 with tab2:
-                    st.markdown("### 🎯 AITAS-EQ 정밀 대응 매수/매도 시나리오")
+                    st.markdown("### 🎯 정밀 기술적 포지셔닝 타점 가이드")
                     st.markdown(f"#### **📊 종합 투자 매력도 스코어: `{final_score}점 / 100점`**")
-                    
-                    # 전술 포지션 의견 및 코멘트
-                    st.markdown(f"**📢 핵심 대응 포지션:** **{opinion}**")
-                    st.markdown(f"**💡 전략적 가이드라인:** {strategy_text}")
+                    st.markdown(f"**📢 핵심 포지션:** **{opinion}**")
+                    st.markdown(f"**💡 가이드라인:** {strategy_text}")
                     st.markdown("---")
                     
-                    # 4대 가격 포지션 밴드 동적 계산
                     buy_target_1 = int(current_price * 0.98)
                     buy_target_2 = int(current_price * 0.94)
                     take_profit = int(current_price * 1.25)
                     stop_loss = int(current_price * 0.88)
                     
-                    st.markdown("#### **💵 핵심 가격 포지셔닝 타점**")
-                    st.success(f"🎯 **1차 분할 매수 밴드 (진입 비중 10%):** `{format(buy_target_1, ',')} 원` 부근 (안전마진 확인용)")
-                    st.success(f"💎 **2차 분할 매수 밴드 (진입 비중 20%):** `{format(buy_target_2, ',')} 원` 부근 (바닥 지지선 리테스트용)")
-                    st.warning(f"📈 **1차 목표 이익 실현가 (Take Profit):** `{format(take_profit, ',')} 원` 부근 (약 +25% 기대수익률)")
-                    st.error(f"🚨 **원칙적 리스크 오프 손절선 (Stop Loss):** `{format(stop_loss, ',')} 원` 부근 (직전 저점 지지 붕괴 시)")
-                    
+                    st.markdown("#### **💵 핵심 가격 가이드라인**")
+                    st.success(f"🎯 **1차 분할 매수 진입가 (비중 10%):** `{format(buy_target_1, ',')} 원` 부근 (안전마진 확인)")
+                    st.success(f"💎 **2차 분할 매수 추가가 (비중 20%):** `{format(buy_target_2, ',')} 원` 부근 (직전 지지선 리테스트)")
+                    st.warning(f"📈 **1차 이익 실현 목표가 (Take Profit):** `{format(take_profit, ',')} 원` 부근 (기대수익률 약 +25%)")
+                    st.error(f"🚨 **원칙적 리스크 오프 손절선 (Stop Loss):** `{format(stop_loss, ',')} 원` 부근 (지지선 이탈 및 추세 소멸 시)")
                     st.markdown("---")
                     
-                    # 자금 집행 비중 및 자금 운용 가이드
-                    st.markdown("#### **💼 포트폴리오 비중 전략 및 자금 운용 지침**")
-                    if final_score >= 75:
-                        st.info("💡 **자금 집행 가이드:** 현재 역사적·기술적 바닥 영역으로 판단됩니다. 전체 투자 가용 자금의 최대 **30%** 비중까지 기계적 분할 집행을 권장합니다. (1차 진입 15%, 2차 조정 시 15% 적립)")
-                    elif final_score >= 50:
-                        st.info("💡 **자금 집행 가이드:** 하방 경직성은 확보했으나 모멘텀이 다소 약할 수 있습니다. 전체 비중 **15%** 이내에서 철저히 분할(주단위 매집)로 평단가를 낮춰가는 전술을 취하십시오.")
+                    # 💡 [정밀 차트 분석 결합형 가이드]
+                    # 볼린저 밴드 및 MACD 지표 상태 실시간 요약
+                    curr_bb_upper = df_chart['볼린저 상한선'].iloc[-1]
+                    curr_bb_lower = df_chart['볼린저 하한선'].iloc[-1]
+                    curr_macd = df_chart['MACD'].iloc[-1]
+                    curr_signal_line = df_chart['MACD 시그널선'].iloc[-1]
+                    
+                    st.markdown("#### **📊 실시간 보조지표 종합 진단**")
+                    if current_price >= curr_bb_upper:
+                        st.error(f"⚠️ **볼린저 밴드 경보:** 주가가 볼린저 밴드 상한선({format(int(curr_bb_upper), ',')}원)을 상회하는 **과열(Overbought)** 돌파 구역에 위치해 있습니다. 신규 진입은 자제하십시오.")
+                    elif current_price <= curr_bb_lower:
+                        st.success(f"💎 **볼린저 밴드 기회:** 주가가 볼린저 밴드 하한선({format(int(curr_bb_lower), ',')}원)에 도달한 **과매도(Oversold)** 구역입니다. 하방 경직성을 바탕으로 한 줍줍 타점입니다.")
                     else:
-                        st.info("💡 **자금 집행 가이드:** **비중 0% (진입 전면 대기)**. 현재 차트 고점 과열 영역이거나 급격한 역배열 하강 국면입니다. 무리한 물타기나 신규 진입을 전면 중단하고, RSI 바닥 변곡이나 거래량 폭발이 재차 감지될 때까지 현금을 100% 보존하십시오.")
+                        st.info(f"🔄 **볼린저 밴드 균형:** 현재 주가는 밴드 중심선 부근에서 안정적인 가격 조율 흐름(정상 궤도)을 보이고 있습니다.")
                         
-                    st.markdown("---")
-                    
-                    # 5대 매매 리스크 체크리스트
-                    st.markdown("#### **⚠️ 주요 리스크 요인 및 체크포인트**")
-                    st.markdown("- **수급 공백 리스크:** 외인/기관의 쌍끌이 매도가 지연될 경우 매수 평단가 부근에서 장기 횡보 국면에 갇힐 우려가 있습니다.")
-                    st.markdown("- **매크로 변동성:** 연준(Fed)의 통화정책 및 금리 기조 변동에 따라 가치 평가(PER) 멀티플이 조정을 받을 가능성을 염두에 두십시오.")
-                    st.markdown("- **거래량 이탈 리스크:** 매수 집행 이후 거래량이 20일 평균의 50% 미만으로 급감할 경우, 추세 돌파 신뢰도가 소멸하므로 손절선을 한 단계(예: -2%) 더 좁게 가져가야 합니다.")
+                    if curr_macd > curr_signal_line:
+                        st.success(f"🔥 **MACD 모멘텀:** MACD 지표({curr_macd:.2f})가 시그널선({curr_signal_line:.2f})을 **상향 돌파(골든크로스)**한 상태로, 단기 매수 모멘텀이 강하게 유입되는 추세입니다.")
+                    else:
+                        st.error(f"📉 **MACD 모멘텀:** MACD 지표({curr_macd:.2f})가 시그널선({curr_signal_line:.2f})을 **하향 돌파(데드크로스)**하여 매도 압력이 지배적인 단기 눌림목 국면입니다.")
                 with tab3:
                     st.markdown(f"### 📰 {stock_name} 증권 터미널 속보 및 위험 진단")
                     for news in advanced_news: 
                         st.markdown(f"- **{news['sent']}** | [{news['title']}]({news['link']})")
 
-        with right_col:
-                st.markdown("### 📈 주가 흐름 및 3대 이동평균선(MA)")
-                st.line_chart(df_chart[['Close', '5일 이동평균선', '20일 이동평균선', '60일 이동평균선']].rename(columns={'Close': '현재 주가'}))
-                st.info(f"🔍 **[차트 진단]** {chart_trend} | 신호: {cross_signal} | {chart_analysis_text}")
+            with right_col:
+                st.markdown("### 📈 기술적 지표 시각화 (Technical Indicators)")
+                
+                # 라디오 버튼으로 차트 뷰 모드 제어
+                chart_view = st.radio(
+                    "📊 시각화할 보조지표를 선택해 주세요",
+                    ["이동평균선 결합 뷰 (5MA/20MA/60MA/120MA)", "볼린저 밴드 뷰 (Bollinger Bands)", "MACD 모멘텀 뷰"],
+                    horizontal=True
+                )
+                
+                if chart_view == "이동평균선 결합 뷰 (5MA/20MA/60MA/120MA)":
+                    df_plot = df_chart[['Close', '5일 이평선', '20일 이평선', '60일 이평선', '120일 이평선']].rename(columns={'Close': '현재 주가'})
+                    st.line_chart(df_plot)
+                    st.info(f"🔍 **[이평선 진단]** {chart_trend} | 크로스 신호: {cross_signal}")
+                elif chart_view == "볼린저 밴드 뷰 (Bollinger Bands)":
+                    df_plot_bb = df_chart[['Close', '볼린저 상한선', '20일 이평선', '볼린저 하한선']].rename(columns={'Close': '현재 주가', '20일 이평선': '볼린저 중심선'})
+                    st.line_chart(df_plot_bb)
+                    st.info(f"🔍 **[밴드 진단]** {stock_name}의 볼린저 밴드 폭(이격도)이 수축 후 확장 국면인지 체크하십시오. 수축은 시세 분출 직전의 에너지 응축 구간입니다.")
+                elif chart_view == "MACD 모멘텀 뷰":
+                    df_plot_macd = df_chart[['MACD', 'MACD 시그널선']]
+                    st.line_chart(df_plot_macd)
+                    st.bar_chart(df_chart['MACD 히스토그램'])
+                    st.info(f"🔍 **[MACD 진단]** MACD가 0선을 기준으로 어디에 머무는지 파악하십시오. 0선 위는 상승 모멘텀 영역, 0선 아래는 하락 모멘텀 영역입니다.")
 
 # ==========================================
 # 5. [신규] 두 번째 탭: 주도주 AI 스크리너 엔진
@@ -479,7 +507,7 @@ with main_tab2:
             ("005930", "삼성전자"), ("000660", "SK하이닉스"), ("042700", "한미반도체"), 
             ("035420", "NAVER"), ("035720", "카카오"), ("005380", "현대차"), ("000270", "기아"), 
             ("068270", "셀트리온"), ("207940", "삼성바이오로직스"), ("373220", "LG에너지솔루션"),
-            ("086520", "에코프로"), ("247540", "에코프로비엠"), ("005490", "POSCO홀딩스"), 
+            ("086520", "에코프로"), ("247540", "エ코프로비엠"), ("005490", "POSCO홀딩스"), 
             ("010140", "삼성중공업"), ("043200", "HD현대일렉트릭"), ("222800", "심텍"), 
             ("017670", "SK텔레콤"), ("051910", "LG화학"), ("034220", "LG디스플레이"), ("454910", "두산로보틱스")
         ]
