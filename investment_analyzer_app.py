@@ -65,7 +65,7 @@ def 통합_포털_종목_검색(query_text):
     return [{"name": name, "code": code} for code, name in results.items()]
 
 # ==========================================
-# 2. 공통 백엔드 연산 엔진 (yfinance 순수 연산 구조)
+# 2. 공통 백엔드 연산 엔진 (💡 ValueError 방어선 구축)
 # ==========================================
 def analyze_stock_score(ticker_code, stock_name):
     df_chart = pd.DataFrame()
@@ -77,57 +77,62 @@ def analyze_stock_score(ticker_code, stock_name):
                 break
         except: pass
     
-    if df_chart.empty: return None
+    # [방어선 1] 데이터가 완전히 비어있거나 턱없이 부족하면 에러를 내지 말고 조용히 무로 돌림
+    if df_chart.empty or len(df_chart) < 5: 
+        return None
         
-    current_price = int(df_chart['Close'].iloc[-1])
-    df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
-    df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
-    
-    ma5_curr, ma20_curr = df_chart['5MA'].iloc[-1], df_chart['20MA'].iloc[-1]
-    ma5_prev, ma20_prev = df_chart['5MA'].iloc[-2], df_chart['20MA'].iloc[-2]
-    
-    cross_signal = ""
-    if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: cross_signal = "골든크로스"
+    try:
+        current_price = int(df_chart['Close'].iloc[-1])
+        df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
+        df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
         
-    delta = df_chart['Close'].diff()
-    up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
-    rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
-    
-    per, pbr = 0.0, 0.0
-    try:
-        info = ticker_obj.info
-        per = info.get('trailingPE', 0.0) or 0.0
-        pbr = info.get('priceToBook', 0.0) or 0.0
-    except: pass
-    
-    # 뉴스 위기 분석
-    has_crisis = False
-    try:
-        enc_text = urllib.parse.quote(f"{stock_name}")
-        url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
-        root = ET.fromstring(res.text.encode('utf-8'))
-        crisis_words = ['상장폐지', '부도', '횡령', '배임', '소송', '디폴트', '검찰', '조작', '수사']
-        for item in root.findall('.//item')[:3]:
-            title = item.find('title').text or ""
-            if any(cw in title for cw in crisis_words):
-                has_crisis = True
-                break
-    except: pass
-    
-    base_score = 50
-    if rsi <= 38: base_score += 15
-    if cross_signal == "골든크로스": base_score += 15
-    if rsi >= 65: base_score -= 15
-    if 0 < pbr <= 1.2: base_score += 10
-    if per > 35: base_score -= 10
-    if has_crisis: base_score -= 25
-    
-    final_score = max(0, min(100, base_score))
-    return {
-        "name": stock_name, "code": ticker_code, "price": current_price, "score": final_score,
-        "rsi": rsi, "pbr": pbr, "per": per, "cross": cross_signal, "df": df_chart
-    }
+        ma5_curr, ma20_curr = df_chart['5MA'].iloc[-1], df_chart['20MA'].iloc[-1]
+        ma5_prev, ma20_prev = df_chart['5MA'].iloc[-2], df_chart['20MA'].iloc[-2]
+        
+        cross_signal = ""
+        if ma5_prev <= ma20_prev and ma5_curr > ma20_curr: cross_signal = "골든크로스"
+            
+        delta = df_chart['Close'].diff()
+        up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
+        rsi = (100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean())))).iloc[-1]
+        
+        per, pbr = 0.0, 0.0
+        try:
+            info = ticker_obj.info
+            per = info.get('trailingPE', 0.0) or 0.0
+            pbr = info.get('priceToBook', 0.0) or 0.0
+        except: pass
+        
+        # 뉴스 위기 분석
+        has_crisis = False
+        try:
+            enc_text = urllib.parse.quote(f"{stock_name}")
+            url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
+            root = ET.fromstring(res.text.encode('utf-8'))
+            crisis_words = ['상장폐지', '부도', '횡령', '배임', '소송', '디폴트', '검찰', '조작', '수사']
+            for item in root.findall('.//item')[:3]:
+                title = item.find('title').text or ""
+                if any(cw in title for cw in crisis_words):
+                    has_crisis = True
+                    break
+        except: pass
+        
+        base_score = 50
+        if rsi <= 38: base_score += 15
+        if cross_signal == "골든크로스": base_score += 15
+        if rsi >= 65: base_score -= 15
+        if 0 < pbr <= 1.2: base_score += 10
+        if per > 35: base_score -= 10
+        if has_crisis: base_score -= 25
+        
+        final_score = max(0, min(100, base_score))
+        return {
+            "name": stock_name, "code": ticker_code, "price": current_price, "score": final_score,
+            "rsi": rsi, "pbr": pbr, "per": per, "cross": cross_signal, "df": df_chart
+        }
+    except:
+        return None
 
 # ==========================================
 # 3. 사이드바 - 종목 검색기
@@ -214,9 +219,10 @@ with main_tab1:
     if not ticker_code:
         st.error("❌ 종목을 찾을 수 없습니다. 정확한 한글 종목명이나 6자리 숫자 코드를 입력해 주세요.")
     else:
+        # [방어선 2] 연산 도중 빈 데이터로 인한 ValueError 완전 격리 스위치
         res_data = analyze_stock_score(ticker_code, stock_name)
         if not res_data:
-            st.error("🔄 야후 금융 서버로부터 주가 데이터를 수신하지 못했습니다. 잠시 후 시도해 주세요.")
+            st.warning("🔄 해당 종목의 실시간 거래소 동기화가 지연되고 있습니다. 다른 종목을 먼저 입력하시거나 잠시 후 다시 검색해 주세요.")
         else:
             df_chart = res_data['df']
             current_price = res_data['price']
