@@ -1,6 +1,4 @@
-streamlit
 pandas
 yfinance
-setuptools
-pykrx
-plotly
+beautifulsoup4
+requests
