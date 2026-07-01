@@ -158,7 +158,8 @@ def analyze_stock_live(ticker_code, stock_name):
     for sfx in [".KS", ".KQ"]:
         try:
             ticker_obj = yf.Ticker(f"{ticker_code}{sfx}")
-            df_chart = ticker_obj.history(period="3mo", timeout=1.5)
+            # 💡 정밀도 보완: 6개월 데이터를 가져와 60일 이동평균선 연산 결측치 오류를 근본적으로 방지합니다.
+            df_chart = ticker_obj.history(period="6mo", timeout=5.0)
             if not df_chart.empty: break
         except: pass
     
@@ -240,7 +241,7 @@ def find_volume_surging_stocks():
             
         try:
             ticker_symbol = f"{code}{suffix}"
-            df = yf.Ticker(ticker_symbol).history(period="1mo", timeout=1.5)
+            df = yf.Ticker(ticker_symbol).history(period="1mo", timeout=3.0)
             df = df.dropna()
             if len(df) < 10: continue
             
@@ -326,13 +327,16 @@ def scan_sector_recommendations():
         for item in stocks:
             try:
                 ticker = f"{item['code']}{item['suffix']}"
-                df = yf.Ticker(ticker).history(period="3mo", timeout=1.5).dropna()
-                if len(df) < 25: continue
+                # 💡 해결책: 수집 기간을 6mo로 늘리고 타임아웃을 5초로 완화하여 MA60 연산 누락과 네트워크 불안정을 근원적으로 해결합니다.
+                df = yf.Ticker(ticker).history(period="6mo", timeout=5.0).dropna()
+                if len(df) < 65: continue # MA60 분석을 위해 충분한 데이터가 있는지 선검사
                 
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA60'] = df['Close'].rolling(window=60).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
                 df = df.dropna()
+                
+                if df.empty: continue
                 
                 current_price = float(df['Close'].iloc[-1])
                 ma20 = float(df['MA20'].iloc[-1])
@@ -359,7 +363,7 @@ def scan_sector_recommendations():
                         "rationale": item['rationale'],
                         "score": round(total_score, 1)
                     }
-            except:
+            except Exception as e:
                 continue
                 
         if best_stock:
@@ -418,15 +422,27 @@ if is_streamlit:
             st.subheader(f"📈 {stock_name} ({ticker_code}) HTS급 실시간 차트 분석")
             df = res_live['df']
             
+            # 💡 가시성 극대화: 최근 60 영업일의 데이터만 슬라이싱하여 너무 오밀조밀하게 뭉치는 현상을 제어합니다.
+            df_sliced = df.tail(60)
+            df_dates = df_sliced.index.strftime('%Y-%m-%d')
+            
             import plotly.graph_objects as go
             fig = go.Figure(data=[go.Candlestick(
-                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+                x=df_dates, open=df_sliced['Open'], high=df_sliced['High'], low=df_sliced['Low'], close=df_sliced['Close'],
                 increasing_line_color='#e61919', decreasing_line_color='#1919e6', name="주가"
             )])
-            fig.add_trace(go.Scatter(x=df.index, y=df['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
-            fig.add_trace(go.Scatter(x=df.index, y=df['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
-            fig.add_trace(go.Scatter(x=df.index, y=df['60MA'], line=dict(color='green', width=1.5), name='60일선'))
-            fig.update_layout(xaxis_rangeslider_visible=False, height=410, margin=dict(l=10, r=10, t=10, b=10))
+            fig.add_trace(go.Scatter(x=df_dates, y=df_sliced['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
+            fig.add_trace(go.Scatter(x=df_dates, y=df_sliced['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
+            fig.add_trace(go.Scatter(x=df_dates, y=df_sliced['60MA'], line=dict(color='green', width=1.5), name='60일선'))
+            
+            # 💡 가독성 튜닝: X축 카테고리화로 주말 공백 삭제 / Y축 한글 천 단위 쉼표 포맷 지정
+            fig.update_layout(
+                xaxis=dict(type='category', tickangle=-45, nticks=15),
+                yaxis=dict(tickformat=','),
+                xaxis_rangeslider_visible=False, 
+                height=410, 
+                margin=dict(l=10, r=10, t=10, b=10)
+            )
             st.plotly_chart(fig, use_container_width=True)
             
             # 이평선 실시간 배열 추적
@@ -582,7 +598,7 @@ if is_streamlit:
             st.warning(f"⚠️ 현재 조건에 부합하는 수급 분출 종목이 없습니다. ({status_msg})")
 
     # ------------------------------------------
-    # 탭 3: 분야별 테마 추천주 (신규 탑재)
+    # 탭 3: 분야별 테마 추천주
     # ------------------------------------------
     with tab_sectors:
         st.subheader("🏷️ 최신 주도 분야별 AI 타점 추천주")
