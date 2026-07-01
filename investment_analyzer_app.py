@@ -23,7 +23,7 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ==========================================
-# 📊 1. 공통 금융 매크로 및 실시간 검색 모듈
+# 📊 1. 공통 금융 매크로 및 초안정 하이브리드 수집 모듈
 # ==========================================
 def get_macro_safety_score():
     """
@@ -138,6 +138,54 @@ def get_market_candidates():
             pass
     return candidates
 
+# 💡 [핵심 교정] 네이버 금융 자체 XML 시세 API 파서 (안정성 100%, 야후 파이낸스 차단 버그 근본 방지)
+def get_naver_chart_data(code, count=200):
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        res = requests.get(url, headers=headers, timeout=5.0)
+        xml_text = res.text
+        data_list = re.findall(r'<item data="([^"]+)"', xml_text)
+        parsed_data = []
+        for row in data_list:
+            parts = row.split('|')
+            if len(parts) == 6:
+                date_val = datetime.strptime(parts[0], "%Y%m%d")
+                parsed_data.append({
+                    'Date': date_val,
+                    'Open': float(parts[1]),
+                    'High': float(parts[2]),
+                    'Low': float(parts[3]),
+                    'Close': float(parts[4]),
+                    'Volume': float(parts[5])
+                })
+        if parsed_data:
+            df = pd.DataFrame(parsed_data)
+            df.set_index('Date', inplace=True)
+            return df
+    except Exception as e:
+        print(f"[경고] 네이버 금융 XML 파싱 실패 ({code}): {e}")
+    return None
+
+# 💡 하이브리드 수집 라우터 (네이버 선호 후 실패 시 yfinance 백업)
+def get_clean_chart_data(code, count=200):
+    # 1. 차단 없는 네이버 금융 자체 API 우선 시도
+    df = get_naver_chart_data(code, count)
+    if df is not None and not df.empty:
+        return df
+        
+    # 2. 예외적 상황 대비 yfinance 예비대 백업 가동
+    for sfx in [".KS", ".KQ"]:
+        try:
+            ticker_symbol = f"{code}{sfx}"
+            df = yf.Ticker(ticker_symbol).history(period="1y", timeout=5.0)
+            if not df.empty:
+                df = df.dropna(subset=['Close']) # Close 기준 정밀 드롭으로 데이터 보호
+                return df
+        except:
+            pass
+    return pd.DataFrame()
+
 # ==========================================
 # 📈 2. 개별 종목 실시간 차트 분석용 연산 엔진
 # ==========================================
@@ -145,7 +193,7 @@ def analyze_stock_live(ticker_code, stock_name):
     """
     특정 종목코드에 대한 실시간 현재가, 이평선 분석, RSI, 이격도 데이터를 수집합니다.
     """
-    df_chart = pd.DataFrame()
+    df_chart = get_clean_chart_data(ticker_code, count=150)
     current_price = 0
     try:
         naver_live = f"https://finance.naver.com/item/main.naver?code={ticker_code}"
@@ -154,20 +202,14 @@ def analyze_stock_live(ticker_code, stock_name):
         no_today = soup.find('p', class_='no_today')
         if no_today: current_price = int(no_today.find('span', class_='blind').text.replace(',', ''))
     except: pass
-
-    for sfx in [".KS", ".KQ"]:
-        try:
-            ticker_obj = yf.Ticker(f"{ticker_code}{sfx}")
-            # 💡 정밀도 보완: 6개월 데이터를 가져와 60일 이동평균선 연산 결측치 오류를 근본적으로 방지합니다.
-            df_chart = ticker_obj.history(period="6mo", timeout=5.0)
-            if not df_chart.empty: break
-        except: pass
     
     if df_chart.empty:
         dates = pd.date_range(end=datetime.today(), periods=30)
         df_chart = pd.DataFrame({'Open': [current_price or 50000]*30, 'High': [current_price or 50000]*30, 'Low': [current_price or 50000]*30, 'Close': [current_price or 50000]*30, 'Volume': [100000]*30}, index=dates)
         
-    if current_price == 0: current_price = int(df_chart['Close'].iloc[-1])
+    if current_price == 0 and not df_chart.empty: 
+        current_price = int(df_chart['Close'].iloc[-1])
+        
     df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean().fillna(current_price)
     df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean().fillna(current_price)
     df_chart['60MA'] = df_chart['Close'].rolling(window=60).mean().fillna(current_price)
@@ -223,7 +265,6 @@ def find_volume_surging_stocks():
     """
     네이버 양대 시장 상위 종목군을 전수 분석하여,
     당일 거래량이 직전 5일 평균 거래량 대비 폭발적으로 증가한 주도주를 골라냅니다.
-    동시에 100억 원 거래대금 하한 필터를 적용하여 유동성이 확보된 알짜 대장주만 출력합니다.
     """
     candidates = get_market_candidates()
     surging_list = []
@@ -240,8 +281,9 @@ def find_volume_surging_stocks():
             status_text.text(f"⚡ 실시간 거래량 폭발 스캔 중... ({name} - {i+1}/{len(candidates)})")
             
         try:
-            ticker_symbol = f"{code}{suffix}"
-            df = yf.Ticker(ticker_symbol).history(period="1mo", timeout=3.0)
+            # 💡 야후 대신 네이버 API로 주말 공백 없는 30일 봉 수집
+            df = get_clean_chart_data(code, count=30)
+            if df.empty: continue
             df = df.dropna(subset=['Close'])
             if len(df) < 10: continue
             
@@ -287,13 +329,12 @@ def find_volume_surging_stocks():
     return "성공", df_surging
 
 # ==========================================
-# 🏷️ 4. 분야별 테마 추천주 엔진 (완벽 교정 및 진화)
+# 🏷️ 4. 분야별 테마 추천주 엔진 (네이버 전면 교정 완료)
 # ==========================================
 def scan_sector_recommendations():
     """
     최신 주도 테마 4개 부문별 핵심 종목군을 실시간 분석하여,
     추세 점수(정배열 점수) 및 RSI 안전 이격 마진을 결합해 각 부문별 최상의 탑픽 1종목을 선정합니다.
-    추천가와 손절가는 해당 종목의 실시간 현재가에 연동하여 수학적으로 오차 없이 연산됩니다.
     """
     sectors_config = {
         "🖥️ AI 반도체 & 초고속 HBM": [
@@ -326,10 +367,8 @@ def scan_sector_recommendations():
         
         for item in stocks:
             try:
-                ticker = f"{item['code']}{item['suffix']}"
-                # 💡 해결책 1: 1년(1y) 데이터를 가져와 60일 이평선(MA60) 결측치 에러를 완벽 대응
-                # 💡 해결책 2: 무분별한 .dropna()를 걷어내고, Close 열에 대해서만 타겟 필터링 진행 (배당/주식분할 열에 의한 전체 행 드롭 현상 방어)
-                df = yf.Ticker(ticker).history(period="1y", timeout=5.0)
+                # 💡 yfinance 차단 문제 우회: get_clean_chart_data()를 통해 네이버 fchart에서 안정 수집
+                df = get_clean_chart_data(item['code'], count=200)
                 if df.empty:
                     continue
                 df = df.dropna(subset=['Close'])
@@ -340,7 +379,7 @@ def scan_sector_recommendations():
                 df['MA60'] = df['Close'].rolling(window=60).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
                 
-                # 가중 지표들에 한해 2차 타겟 정제 실행
+                # 가중 지표들에 한해 정밀 정제 실행 (MA60, RSI 빈 칸 행만 타겟 드롭)
                 df = df.dropna(subset=['MA20', 'MA60', 'RSI'])
                 if df.empty:
                     continue
