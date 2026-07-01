@@ -285,9 +285,94 @@ def find_volume_surging_stocks():
     df_surging = df_surging.sort_values(by='vol_ratio', ascending=False).head(10)
     return "성공", df_surging
 
+# ==========================================
+# 🏷️ 4. 분야별 테마 추천주 엔진 (신규 탑재)
+# ==========================================
+def scan_sector_recommendations():
+    """
+    최신 주도 테마 4개 부문별 핵심 종목군을 실시간 분석하여,
+    추세 점수(정배열 점수) 및 RSI 안전 이격 마진을 결합해 각 부문별 최상의 탑픽 1종목을 선정합니다.
+    추천가와 손절가는 해당 종목의 실시간 현재가에 연동하여 수학적으로 오차 없이 연산됩니다.
+    """
+    sectors_config = {
+        "🖥️ AI 반도체 & 초고속 HBM": [
+            {"code": "000660", "name": "SK하이닉스", "suffix": ".KS", "rationale": "글로벌 HBM 서플라이체인 대장주로서 우수한 정배열 연속성과 기관의 강력한 하방 경직 매수세가 뒷받침됩니다."},
+            {"code": "005930", "name": "삼성전자", "suffix": ".KS", "rationale": "메모리 턴어라운드 및 HBM 품질 승인 모멘텀에 따른 대형 수급 동조화 수혜가 부각됩니다."},
+            {"code": "042700", "name": "한미반도체", "suffix": ".KS", "rationale": "HBM 핵심 가공장비인 TC 본더 독점 지배력과 압도적인 고정 영업이익률 마진을 지켜내는 알짜 자산입니다."}
+        ],
+        "⚡ AI 송배전 & 고전력 전력 인프라": [
+            {"code": "043200", "name": "HD현대일렉트릭", "suffix": ".KS", "rationale": "북미 변압기 초장기 쇼티지 공급 부족 상황 속에서 수년 치 고마진 백로그를 독점 수주한 전력망 대장주입니다."},
+            {"code": "010120", "name": "LS ELECTRIC", "suffix": ".KS", "rationale": "배전반 및 AI 데이터센터 전력망 교체 사이클에 힘입어 전방 산업 낙수 수혜를 누리는 핵심 기업입니다."},
+            {"code": "298040", "name": "효성중공업", "suffix": ".KS", "rationale": "유럽 및 아시아 고압 변압기 시장 내 시장 점유율 가속화와 주가 눌림목 지지력이 돋보이는 추세형 차트입니다."}
+        ],
+        "🚀 우주항공 & K-방산 수출": [
+            {"code": "012450", "name": "한화에어로스페이스", "suffix": ".KS", "rationale": "글로벌 지정학적 리스크 확대로 인한 자주포 및 다련장 로켓 장기 공급 계약 수혜와 우주 항공 모멘텀의 선구자입니다."},
+            {"code": "064350", "name": "현대로템", "suffix": ".KS", "rationale": "해외 전차 납품 실적의 본격적인 흑자 반영 및 안정적인 수주 잔고 기반으로 가파른 우상향 궤도를 그리고 있습니다."},
+            {"code": "079550", "name": "LIG넥스원", "suffix": ".KS", "rationale": "유도무기 및 방어체계 분야 수출 가이드라인 확대와 고마진 파이프라인 안착으로 실적 방어력이 매우 뛰어납니다."}
+        ],
+        "🧬 차세대 메가 바이오": [
+            {"code": "206640", "name": "알테오젠", "suffix": ".KQ", "rationale": "글로벌 독점적 인간 히알루로니다제 기술 라이센스 아웃 확대와 피하주사 제형 변경 트렌드를 선도하는 핵심 바이오주입니다."},
+            {"code": "068270", "name": "셀트리온", "suffix": ".KS", "rationale": "합병 신약 포트폴리오 다각화 및 미국 직판 영업망 안정화에 따른 실적 턴어라운드 에너지가 이평선에 수렴 중입니다."},
+            {"code": "207940", "name": "삼성바이오로직스", "suffix": ".KS", "rationale": "글로벌 초대형 CMO 5공장 조기 가동 예정 및 높은 생산 가동률 유지로 장기 성장이 담보된 우량 안전 자산입니다."}
+        ]
+    }
+    
+    sector_results = []
+    
+    for sector_name, stocks in sectors_config.items():
+        best_stock = None
+        best_score = -9999
+        
+        for item in stocks:
+            try:
+                ticker = f"{item['code']}{item['suffix']}"
+                df = yf.Ticker(ticker).history(period="3mo", timeout=1.5).dropna()
+                if len(df) < 25: continue
+                
+                df['MA20'] = df['Close'].rolling(window=20).mean()
+                df['MA60'] = df['Close'].rolling(window=60).mean()
+                df['RSI'] = calculate_rsi(df['Close'])
+                df = df.dropna()
+                
+                current_price = float(df['Close'].iloc[-1])
+                ma20 = float(df['MA20'].iloc[-1])
+                ma60 = float(df['MA60'].iloc[-1])
+                rsi = float(df['RSI'].iloc[-1])
+                
+                # 퀀트 가속화 채점표
+                # 1) 정배열 보너스
+                trend_score = 40 if current_price > ma20 > ma60 else (15 if current_price > ma20 else 0)
+                # 2) RSI 이격 최적화 보너스 (너무 과열되지 않은 40~55 채널 선호)
+                rsi_score = max(0, 40 - abs(rsi - 48) * 2)
+                
+                total_score = trend_score + rsi_score
+                
+                if total_score > best_score:
+                    best_score = total_score
+                    best_stock = {
+                        "name": item['name'],
+                        "code": item['code'],
+                        "price": int(current_price),
+                        "rsi": round(rsi, 1),
+                        "buy_price": int(current_price * 0.985), # 추천 매수 진입가 자동 연산
+                        "stop_price": int(current_price * 0.94),  # 기계적 손절가 자동 연산
+                        "rationale": item['rationale'],
+                        "score": round(total_score, 1)
+                    }
+            except:
+                continue
+                
+        if best_stock:
+            sector_results.append({
+                "sector": sector_name,
+                "data": best_stock
+            })
+            
+    return sector_results
+
 
 # ==========================================
-# 🛠️ DUAL-MODE 실행 분기 레이어 (Streamlit vs CLI)
+# 🛠 * DUAL-MODE 실행 분기 레이어 (Streamlit vs CLI) *
 # ==========================================
 if is_streamlit:
     st.markdown("""
@@ -300,6 +385,7 @@ if is_streamlit:
         .report-box { padding: 1.2rem; border-radius: 8px; background-color: #f8f9fa; border-left: 5px solid #0f52ba; margin-bottom: 1rem; }
         .price-card { padding: 0.8rem; border-radius: 6px; text-align: center; color: white; font-weight: bold; font-size: 1.1rem; margin-bottom: 0.5rem; }
         .vol-card { padding: 1.2rem; border-radius: 10px; background-color: #fcfcfd; border: 1px solid #e2e8f0; border-top: 4px solid #ff4d4d; margin-bottom: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+        .sector-card { padding: 1.2rem; border-radius: 10px; background-color: #ffffff; border: 1px solid #e2e8f0; border-left: 6px solid #ffbd00; margin-bottom: 1rem; box-shadow: 1px 1px 6px rgba(0,0,0,0.05); }
         .guide-box { padding: 1.2rem; border-radius: 8px; background-color: #f0f7ff; border-left: 5px solid #1a73e8; margin-top: 1rem; }
         .guide-title { font-weight: bold; color: #1a73e8; font-size: 1.1rem; margin-bottom: 0.5rem; }
         </style>
@@ -309,11 +395,15 @@ if is_streamlit:
     st.title("🏛️ AITAS-EQ 실시간 투자 전략 관제 시스템")
     st.write("20년 경력 운용역의 실시간 종목 분석기 및 수급 대량 거래량 돌파 포착 장치입니다.")
     
-    # 탭 분리: 개별 정밀 차트 분석 vs 거래량 폭발 주도주
-    tab_live, tab_vol_surge = st.tabs(["🔍 개별 종목 실시간 차트 분석", "🔥 실시간 거래량 폭발 주도주"])
+    # 탭 분리: 개별 정밀 차트 분석 vs 거래량 폭발 주도주 vs 분야별 테마 추천주
+    tab_live, tab_vol_surge, tab_sectors = st.tabs([
+        "🔍 개별 종목 실시간 차트 분석", 
+        "🔥 실시간 거래량 폭발 주도주",
+        "🏷️ 분야별 테마 추천주"
+    ])
 
     # ------------------------------------------
-    # 탭 1: 개별 종목 실시간 차트 분석 & AI 타점 판독 (보존 및 차트 보는 법 가이드 추가)
+    # 탭 1: 개별 종목 실시간 차트 분석 & AI 타점 판독
     # ------------------------------------------
     with tab_live:
         st.sidebar.header("🎯 실시간 종목 관제")
@@ -329,34 +419,14 @@ if is_streamlit:
             df = res_live['df']
             
             import plotly.graph_objects as go
-            
-            # 💡 날짜를 문자열 포맷(YYYY-MM-DD)으로 변환하여 주말 공백을 제거하고 하루하루 표시합니다.
-            x_dates = df.index.strftime('%Y-%m-%d')
-            
             fig = go.Figure(data=[go.Candlestick(
-                x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
                 increasing_line_color='#e61919', decreasing_line_color='#1919e6', name="주가"
             )])
-            fig.add_trace(go.Scatter(x=x_dates, y=df['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
-            fig.add_trace(go.Scatter(x=x_dates, y=df['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
-            fig.add_trace(go.Scatter(x=x_dates, y=df['60MA'], line=dict(color='green', width=1.5), name='60일선'))
-            
-            # 💡 Y축 가격에 '100,000' 천 단위 컴마를 적용하고, X축은 일별 카테고리 형태로 설정합니다.
-            fig.update_layout(
-                xaxis_rangeslider_visible=False, 
-                height=410, 
-                margin=dict(l=10, r=10, t=10, b=10),
-                xaxis=dict(
-                    type='category',
-                    tickangle=-45,
-                    tickmode='auto',
-                    nticks=15,
-                    tickfont=dict(size=10)
-                ),
-                yaxis=dict(
-                    tickformat=','
-                )
-            )
+            fig.add_trace(go.Scatter(x=df.index, y=df['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
+            fig.add_trace(go.Scatter(x=df.index, y=df['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
+            fig.add_trace(go.Scatter(x=df.index, y=df['60MA'], line=dict(color='green', width=1.5), name='60일선'))
+            fig.update_layout(xaxis_rangeslider_visible=False, height=410, margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig, use_container_width=True)
             
             # 이평선 실시간 배열 추적
@@ -393,24 +463,24 @@ if is_streamlit:
                 
                 ### ① 봉차트(캔들스틱)의 시각적 언어 해석법
                 캔들의 빨간색(양봉)과 파란색(음봉)은 당일 시장 참가자들의 치열한 심리 전쟁 결과입니다.
-                *   **몸통의 길이:** 몸통이 길수록(장대양봉/장대음봉) 한쪽 방향의 지배력이 매우 강력함을 뜻합니다.
-                *   **윗꼬리가 긴 캔들:** 장 초반 급등했다가 매도 투매물량을 맞고 주저앉은 모양새입니다. 특히 고가권에서 대량 거래량과 함께 발생한 긴 윗꼬리는 세력이 개인에게 물량을 떠넘긴 **'설거지 신호'**일 확률이 높습니다.
-                *   **밑꼬리가 긴 캔들:** 장중 폭락했으나 마감 직전 누군가 막대한 자금력으로 주가를 아래에서 전부 받아내며 끌어올린 흔적입니다. **'저점 매집 신호'**로 해석됩니다.
+                * **몸통의 길이:** 몸통이 길수록(장대양봉/장대음봉) 한쪽 방향의 지배력이 매우 강력함을 뜻합니다.
+                * **윗꼬리가 긴 캔들:** 장 초반 급등했다가 매도 투매물량을 맞고 주저앉은 모양새입니다. 특히 고가권에서 대량 거래량과 함께 발생한 긴 윗꼬리는 세력이 개인에게 물량을 떠넘긴 **'설거지 신호'**일 확률이 높습니다.
+                * **밑꼬리가 긴 캔들:** 장중 폭락했으나 마감 직전 누군가 막대한 자금력으로 주가를 아래에서 전부 받아내며 끌어올린 흔적입니다. **'저점 매집 신호'**로 해석됩니다.
                 
                 ### ② 이동평균선(이평선)의 배열 구조와 지지선 역할
                 이동평균선은 해당 기간 동안 투자자들이 주식을 산 **'평균 매입 단가'**입니다.
-                *   **5일선(주황색):** 일주일 동안의 평균 단가이며 주가의 '단기 엔진 방향'을 뜻합니다. 급등주는 5일선을 절대로 깨지 않고 타고 갑니다.
-                *   **20일선(보라색):** 한 달간의 평균 단가이자 시장의 **'생명선'**입니다. 주가가 조정을 받을 때 20일선 부근에서 튕겨 올라가는 지지력(눌림목 타점)을 보여주어야 추세가 살아있다고 판단합니다.
-                *   **정배열(Bullish):** 주가 > 5일선 > 20일선 > 60일선 순서로 부채꼴 모양 우상향하는 정배열 상태에서는 이평선이 강력한 지지대 역할을 하므로 매수하기 가장 안전합니다.
-                *   **역배열(Bearish):** 반대로 이평선이 거꾸로 뒤집힌 하락세에서는 올라갈 때마다 위에 물려있던 매물 벽이 폭탄으로 쏟아지니 매수를 절대 피해야 합니다.
+                * **5일선(주황색):** 일주일 동안의 평균 단가이며 주가의 '단기 엔진 방향'을 뜻합니다. 급등주는 5일선을 절대로 깨지 않고 타고 갑니다.
+                * **20일선(보라색):** 한 달간의 평균 단가이자 시장의 **'생명선'**입니다. 주가가 조정을 받을 때 20일선 부근에서 튕겨 올라가는 지지력(눌림목 타점)을 보여주어야 추세가 살아있다고 판단합니다.
+                * **정배열(Bullish):** 주가 > 5일선 > 20일선 > 60일선 순서로 부채꼴 모양 우상향하는 정배열 상태에서는 이평선이 강력한 지지대 역할을 하므로 매수하기 가장 안전합니다.
+                * **역배열(Bearish):** 반대로 이평선이 거꾸로 뒤집힌 하락세에서는 올라갈 때마다 위에 물려있던 매물 벽이 폭탄으로 쏟아지니 매수를 절대 피해야 합니다.
                 
                 ### ③ 거래량 분석: 주가 상승의 유일한 휘발유
                 거래량은 자금력이 막강한 기관과 외국인 세력(주포)들이 절대 감출 수 없는 유일한 흔적입니다.
-                *   주가가 횡보하다가 5일 평균 거래량 대비 **1.5배~3배 이상 급증하는 돌파 거래량**이 실리면서 양봉을 그리는 날은 세력이 개입하여 시세를 상방으로 제어하기 시작한 **'첫 신호탄'**입니다.
+                * 주가가 횡보하다가 5일 평균 거래량 대비 **1.5배~3배 이상 급증하는 돌파 거래량**이 실리면서 양봉을 그리는 날은 세력이 개입하여 시세를 상방으로 제어하기 시작한 **'첫 신호탄'**입니다.
                 
                 ### ④ 보조 지표(RSI 및 이격도)의 균형 잡기
-                *   **RSI (상대강도지수):** 30에 가까워지면 시장 참가자들이 과도한 공포에 질려 던진 **'과매도(바닥 매수 기회)'**, 70에 가까워지면 탐욕에 찌든 **'과열(매도 및 차익실현 준비)'**을 의미합니다.
-                *   **이격도(MA Gap):** 현재 주가가 생명선인 20일선과 얼마나 동떨어져 있는지 측정하는 지표입니다. 이격도가 +10% 이상 벌어지면 이평선으로 회귀하려는 본능 때문에 주가가 급락하기 쉬우므로, 반드시 이격도가 좁혀지는 **눌림목(이격도 0% 내외) 영역**에서 매수해야 합니다.
+                * **RSI (상대강도지수):** 30에 가까워지면 시장 참가자들이 과도한 공포에 질려 던진 **'과매도(바닥 매수 기회)'**, 70에 가까워지면 탐욕에 찌든 **'과열(매도 및 차익실현 준비)'**을 의미합니다.
+                * **이격도(MA Gap):** 현재 주가가 생명선인 20일선과 얼마나 동떨어져 있는지 측정하는 지표입니다. 이격도가 +10% 이상 벌어지면 이평선으로 회귀하려는 본능 때문에 주가가 급락하기 쉬우므로, 반드시 이격도가 좁혀지는 **눌림목(이격도 0% 내외) 영역**에서 매수해야 합니다.
                 """)
             
         with col_r:
@@ -444,7 +514,6 @@ if is_streamlit:
         st.subheader("🔥 실시간 거래량 폭발 주도주 랭킹 TOP 10")
         st.write("당일 거래금액이 최소 **100억 원 이상** 수혈되며, 지난 5일 평균 거래량 대비 **가장 강력한 급증 돌파**가 일어난 실시간 알짜 종목들입니다.")
         
-        # 10분 캐싱을 통해 Streamlit 리프레시 속도를 0.1초 수준으로 최적화
         @st.cache_data(ttl=600)
         def cached_volume_surge_scan():
             return find_volume_surging_stocks()
@@ -511,6 +580,80 @@ if is_streamlit:
                         
         else:
             st.warning(f"⚠️ 현재 조건에 부합하는 수급 분출 종목이 없습니다. ({status_msg})")
+
+    # ------------------------------------------
+    # 탭 3: 분야별 테마 추천주 (신규 탑재)
+    # ------------------------------------------
+    with tab_sectors:
+        st.subheader("🏷️ 최신 주도 분야별 AI 타점 추천주")
+        st.write("20년 경력 헤지펀드 운용역이 설정한 4대 핵심 미래 성장 산업 카테고리입니다. 각 분야별 대표 주도주 후보들을 실시간 퀀트 계량 엔진으로 분석하여 최고의 차트 수급 상태를 보여주는 1위 탑픽 종목을 스캔해 드립니다.")
+        
+        @st.cache_data(ttl=600)
+        def cached_sector_recommendations():
+            return scan_sector_recommendations()
+            
+        sector_picks = cached_sector_recommendations()
+        
+        if sector_picks:
+            cols_sec = st.columns(2)
+            
+            for idx, item in enumerate(sector_picks):
+                target_col = cols_sec[0] if idx % 2 == 0 else cols_sec[1]
+                stock_data = item['data']
+                
+                with target_col:
+                    st.markdown(f"""
+                    <div class='sector-card'>
+                        <h3 style='margin:0; color:#1a2a40; font-size:1.3rem;'>{item['sector']}</h3>
+                        <h4 style='margin: 10px 0; color:#0f52ba; font-size:1.15rem;'>🏆 실시간 분야 TOP 1위: {stock_data['name']} ({stock_data['code']})</h4>
+                        <p style='font-size:0.92rem; color:#555; line-height:1.45; margin-bottom:12px;'><strong>운용역 추천 논리:</strong> {stock_data['rationale']}</p>
+                        
+                        <div style='background-color:#118822; color:white; padding:8px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:8px; font-size:0.95rem;'>
+                            🎯 권장 매수 진입가: {format(stock_data['buy_price'], ',')} 원 이하 (20일 눌림목)
+                        </div>
+                        <div style='background-color:#ff0000; color:white; padding:8px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:8px; font-size:0.95rem;'>
+                            🚨 리스크 손절 금액선: {format(stock_data['stop_price'], ',')} 원 (기계적 칼손절)
+                        </div>
+                        
+                        <ul style='font-size:0.9rem; padding-left:20px; color:#333; margin-top:10px;'>
+                            <li>현재 시장 가격: <b>{format(stock_data['price'], ',')}원</b></li>
+                            <li>과열도 수치(RSI): <b>{stock_data['rsi']}점</b></li>
+                            <li>실시간 기술적 채점: <b>{stock_data['score']}점 / 80점 만점</b></li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+            # 분야별 텔레그램 수동 발송
+            st.markdown("---")
+            st.subheader("📡 수동 분야별 테마 추천주 텔레그램 전송")
+            if st.button("📨 현재 분야별 탑픽 종목 리포트 텔레그램 발송", type="primary"):
+                if not TOKEN or not CHAT_ID:
+                    st.error("❌ 텔레그램 토큰 또는 채널 ID 환경변수가 누락되었습니다.")
+                else:
+                    kst_time = datetime.utcnow() + timedelta(hours=9)
+                    now_str = kst_time.strftime("%Y-%m-%d %H:%M")
+                    msg = f"🏛️ [AITAS-EQ] 최신 주도 분야별 AI 타점 추천 리포트\\n({now_str} 기준)\\n\\n"
+                    msg += "20년 운용역 퀀트 엔진이 실시간 수급과 차트를 융합해 찾아낸 분야별 대장 탑픽입니다.\\n\\n"
+                    msg += "----------------------------------------\\n\\n"
+                    
+                    for item in sector_picks:
+                        stock_data = item['data']
+                        msg += f"📌 {item['sector']}\\n"
+                        msg += f"  👑 탑픽: {stock_data['name']} ({format(stock_data['price'], ',')}원)\\n"
+                        msg += f"  🎯 추천매수가: {format(stock_data['buy_price'], ',')}원 이하\\n"
+                        msg += f"  🚨 손절기준가: {format(stock_data['stop_price'], ',')}원\\n"
+                        msg += f"  💡 이견: {stock_data['rationale']}\\n\\n"
+                        
+                    try:
+                        res = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+                        if res.status_code == 200:
+                            st.success("✅ 분야별 탑픽 리포트가 텔레그램으로 성공적으로 발송되었습니다!")
+                        else:
+                            st.error(f"❌ 발송 실패 - {res.text}")
+                    except Exception as e:
+                        st.error(f"❌ 전송 에러: {e}")
+        else:
+            st.warning("⚠️ 분야별 탑픽 데이터를 분석하는 도중 에러가 발생했거나 수집 가능한 종목군이 없습니다.")
 
 else:
     # 2) 깃허브 액션 배포(CLI 콘솔 모드)로 가동할 때 자동으로 텔레그램 메시지 전송
