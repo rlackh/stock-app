@@ -9,6 +9,10 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import urllib.parse
 import xml.etree.ElementTree as ET
+import urllib3
+
+# 💡 SSL 우회 연결 시 발생하는 불필요한 콘솔 경고 스팸 완벽 차단
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 💡 Streamlit 실행 여부 감지 레이어 (Dual-Mode 지원)
 try:
@@ -77,7 +81,8 @@ if is_streamlit:
         try:
             enc_q = urllib.parse.quote(clean_q.encode('euc-kr'))
             naver_url = f"https://ac.finance.naver.com/ac?q={enc_q}&q_enc=euc-kr&st=1&frm=stock&r_format=json"
-            res = requests.get(naver_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
+            # 💡 SSL 우회 verify=False 장착
+            res = requests.get(naver_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2, verify=False).json()
             if 'items' in res and res['items'][0]:
                 for item in res['items'][0]:
                     code = item[0][1]
@@ -97,7 +102,8 @@ else:
         try:
             enc_q = urllib.parse.quote(clean_q.encode('euc-kr'))
             naver_url = f"https://ac.finance.naver.com/ac?q={enc_q}&q_enc=euc-kr&st=1&frm=stock&r_format=json"
-            res = requests.get(naver_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2).json()
+            # 💡 SSL 우회 verify=False 장착
+            res = requests.get(naver_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2, verify=False).json()
             if 'items' in res and res['items'][0]:
                 for item in res['items'][0]:
                     code = item[0][1]
@@ -115,12 +121,13 @@ def find_stock_code_global_portal(name_or_code):
 
 def get_market_candidates():
     """네이버 금융에서 양대 시장 시총 상위 40개씩, 총 80개 후보 종목 수집"""
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     candidates = []
     for sosok, suffix in [(0, '.KS'), (1, '.KQ')]:
         url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}"
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            # 💡 SSL 우회 verify=False 장착
+            res = requests.get(url, headers=headers, timeout=10, verify=False)
             res.encoding = 'euc-kr'
             matches = re.findall(r'href="/item/main\.naver\?code=(\d{6})"\s*class="tltle">([^<]+)</a>', res.text)
             
@@ -138,14 +145,16 @@ def get_market_candidates():
             pass
     return candidates
 
-# 💡 [핵심 교정] 네이버 금융 자체 XML 시세 API 파서 (안정성 100%, 야후 파이낸스 차단 버그 근본 방지)
+# 💡 [핵심 보완] 네이버 금융 자체 XML 시세 API 파서 (SSL 핸드셰이크 오류 우회 패치 가동)
 def get_naver_chart_data(code, count=200):
     url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        res = requests.get(url, headers=headers, timeout=5.0)
+        # 💡 SSL 우회 verify=False 탑재하여 인증서 오류로 인한 None 유출 현상 근본적 해결
+        res = requests.get(url, headers=headers, timeout=5.0, verify=False)
         xml_text = res.text
-        data_list = re.findall(r'<item data="([^"]+)"', xml_text)
+        # 대소문자 혼용 유실 방지용 re.IGNORECASE 매칭
+        data_list = re.findall(r'<item\s+data="([^"]+)"', xml_text, re.IGNORECASE)
         parsed_data = []
         for row in data_list:
             parts = row.split('|')
@@ -169,7 +178,7 @@ def get_naver_chart_data(code, count=200):
 
 # 💡 하이브리드 수집 라우터 (네이버 선호 후 실패 시 yfinance 백업)
 def get_clean_chart_data(code, count=200):
-    # 1. 차단 없는 네이버 금융 자체 API 우선 시도
+    # 1. 차단 및 인증 오류 없는 네이버 금융 자체 API 우선 시도
     df = get_naver_chart_data(code, count)
     if df is not None and not df.empty:
         return df
@@ -197,7 +206,8 @@ def analyze_stock_live(ticker_code, stock_name):
     current_price = 0
     try:
         naver_live = f"https://finance.naver.com/item/main.naver?code={ticker_code}"
-        res_live = requests.get(naver_live, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
+        # 💡 SSL 우회 verify=False 장착
+        res_live = requests.get(naver_live, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2, verify=False)
         soup = BeautifulSoup(res_live.text, 'html.parser')
         no_today = soup.find('p', class_='no_today')
         if no_today: current_price = int(no_today.find('span', class_='blind').text.replace(',', ''))
@@ -239,7 +249,8 @@ def get_live_news(stock_name):
     try:
         enc_text = urllib.parse.quote(f"{stock_name}")
         url = f"https://news.google.com/rss/search?q={enc_text}&hl=ko&gl=KR&ceid=KR:ko"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
+        # 💡 SSL 우회 verify=False 장착
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2, verify=False)
         root = ET.fromstring(res.text.encode('utf-8'))
         for item in root.findall('.//item')[:5]:
             title = item.find('title').text or ""
@@ -281,7 +292,6 @@ def find_volume_surging_stocks():
             status_text.text(f"⚡ 실시간 거래량 폭발 스캔 중... ({name} - {i+1}/{len(candidates)})")
             
         try:
-            # 💡 야후 대신 네이버 API로 주말 공백 없는 30일 봉 수집
             df = get_clean_chart_data(code, count=30)
             if df.empty: continue
             df = df.dropna(subset=['Close'])
@@ -350,7 +360,7 @@ def scan_sector_recommendations():
         "🚀 우주항공 & K-방산 수출": [
             {"code": "012450", "name": "한화에어로스페이스", "suffix": ".KS", "rationale": "글로벌 지정학적 리스크 확대로 인한 자주포 및 다련장 로켓 장기 공급 계약 수혜와 우주 항공 모멘텀의 선구자입니다."},
             {"code": "064350", "name": "현대로템", "suffix": ".KS", "rationale": "해외 전차 납품 실적의 본격적인 흑자 반영 및 안정적인 수주 잔고 기반으로 가파른 우상향 궤도를 그리고 있습니다."},
-            {"code": "079550", "name": "LIG넥스원", "suffix": ".KS", "rationale": "유도무기 및 방어체계 분야 수출 가이드라인 확대와 고마진 파이프라인 안착으로 실적 방어력이 매우 뛰어납니다."}
+            {"code": "079550", "name": "LIG넥스원", "suffix": ".KS", "rationale": "유도무기 및 방어체계 분야 수출 가이드라인 확대와 고마진 파이프라인 안착으로 실적 방어력이 매우 뛰어납니다."},
         ],
         "🧬 차세대 메가 바이오": [
             {"code": "206640", "name": "알테오젠", "suffix": ".KQ", "rationale": "글로벌 독점적 인간 히알루로니다제 기술 라이센스 아웃 확대와 피하주사 제형 변경 트렌드를 선도하는 핵심 바이오주입니다."},
