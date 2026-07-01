@@ -242,11 +242,11 @@ def find_volume_surging_stocks():
         try:
             ticker_symbol = f"{code}{suffix}"
             df = yf.Ticker(ticker_symbol).history(period="1mo", timeout=3.0)
-            df = df.dropna()
+            df = df.dropna(subset=['Close'])
             if len(df) < 10: continue
             
             df['Vol5'] = df['Volume'].rolling(window=5).mean()
-            df = df.dropna()
+            df = df.dropna(subset=['Vol5'])
             if len(df) < 2: continue
             
             current_price = float(df['Close'].iloc[-1])
@@ -287,7 +287,7 @@ def find_volume_surging_stocks():
     return "성공", df_surging
 
 # ==========================================
-# 🏷️ 4. 분야별 테마 추천주 엔진 (신규 탑재)
+# 🏷️ 4. 분야별 테마 추천주 엔진 (완벽 교정 및 진화)
 # ==========================================
 def scan_sector_recommendations():
     """
@@ -327,16 +327,23 @@ def scan_sector_recommendations():
         for item in stocks:
             try:
                 ticker = f"{item['code']}{item['suffix']}"
-                # 💡 해결책: 수집 기간을 6mo로 늘리고 타임아웃을 5초로 완화하여 MA60 연산 누락과 네트워크 불안정을 근원적으로 해결합니다.
-                df = yf.Ticker(ticker).history(period="6mo", timeout=5.0).dropna()
-                if len(df) < 65: continue # MA60 분석을 위해 충분한 데이터가 있는지 선검사
+                # 💡 해결책 1: 1년(1y) 데이터를 가져와 60일 이평선(MA60) 결측치 에러를 완벽 대응
+                # 💡 해결책 2: 무분별한 .dropna()를 걷어내고, Close 열에 대해서만 타겟 필터링 진행 (배당/주식분할 열에 의한 전체 행 드롭 현상 방어)
+                df = yf.Ticker(ticker).history(period="1y", timeout=5.0)
+                if df.empty:
+                    continue
+                df = df.dropna(subset=['Close'])
+                if len(df) < 65:
+                    continue
                 
                 df['MA20'] = df['Close'].rolling(window=20).mean()
                 df['MA60'] = df['Close'].rolling(window=60).mean()
                 df['RSI'] = calculate_rsi(df['Close'])
-                df = df.dropna()
                 
-                if df.empty: continue
+                # 가중 지표들에 한해 2차 타겟 정제 실행
+                df = df.dropna(subset=['MA20', 'MA60', 'RSI'])
+                if df.empty:
+                    continue
                 
                 current_price = float(df['Close'].iloc[-1])
                 ma20 = float(df['MA20'].iloc[-1])
@@ -452,7 +459,7 @@ if is_streamlit:
             if c5 > c20 > c60:
                 status = "🔥 [적극 매수 권장] 완벽한 급등형 정배열 차트"
                 status_color = "#118822"
-                why_text = "5일선, 20일선, 60일선이 나란히 부채꼴로 펼쳐지는 강세장 차트입니다. 단기 수급이 장기 매물벽을 완전히 뚫어냈으므로 장대양봉 후 눌림목 지지를 줄 때 매수해야 하는 정석 타점입니다."
+                why_text = "5일선, 20일선, 60일선이 나란히 부채꼴로 펼쳐지는 강세장 차트입니다. 단기 수급이 장기 매물벽을 완전히 뚫어냈으므로장대양봉 후 눌림목 지지를 줄 때 매수해야 하는 정석 타점입니다."
             elif c5 < c20 < c60:
                 status = "🚨 [매수 금지 위기] 하향 역배열 및 낙뢰 차트"
                 status_color = "#ff0000"
