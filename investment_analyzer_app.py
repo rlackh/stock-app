@@ -226,10 +226,13 @@ def get_live_news(stock_name):
     return classified
 
 # ==========================================
-# 🐋 3. 톱티어 추천 포트폴리오 (실시간 자동 연산 엔진)
+# 🐋 3. 진화된 AI 리스크 패리티 포트폴리오 (실시간 연산 엔진)
 # ==========================================
 def run_advanced_portfolio_strategy():
-    """매크로, 100억 거래대금 필터링, 정배열 수급 필터링 후 리스크 패리티 비중배분 실행"""
+    """
+    매크로, 100억 거래대금 필터링, 멀티팩터 수급 필터링 후 
+    진화된 거시경제 감응형 리스크 패리티 비중배분을 실행합니다.
+    """
     macro_score, macro_report = get_macro_safety_score()
     candidates = get_market_candidates()
     survivors = []
@@ -243,7 +246,7 @@ def run_advanced_portfolio_strategy():
     for i, (code, name, suffix) in enumerate(candidates):
         if is_streamlit and progress_bar and status_text:
             progress_bar.progress((i + 1) / len(candidates))
-            status_text.text(f"🔍 AI 계량 필터 스캔 중... ({name} - {i+1}/{len(candidates)})")
+            status_text.text(f"🔍 AI 멀티팩터 수급 필터 스캔 중... ({name} - {i+1}/{len(candidates)})")
             
         try:
             ticker_symbol = f"{code}{suffix}"
@@ -266,7 +269,7 @@ def run_advanced_portfolio_strategy():
             current_vol = float(df['Volume'].iloc[-1])
             avg_vol_5d = float(df['Vol5'].iloc[-2])
             
-            # 💡 [핵심 도입 2]: 당일 거래대금 100억 원 하한 필터 (개잡주 자동 필터링)
+            # 💡 [진화 도입 1]: 당일 거래대금 100억 원 하한 필터 (유동성 부족 잡주 배제)
             transaction_value = current_price * current_vol
             if transaction_value < 10_000_000_000:
                 continue
@@ -293,16 +296,25 @@ def run_advanced_portfolio_strategy():
     if not survivors:
         return macro_score, macro_report, "조건 부합 종목 없음", None
 
+    # 💡 [진화 도입 2]: 다차원 퀀트 멀티팩터 스코어링 (Multi-Factor Scoring)
+    # 거래대금 분출 정도, RSI 이격 안정성, 20일선 정배열 우상향 각도를 결합하여 점수화
     ranked_stocks = []
     for s in survivors:
-        score = (s['vol_ratio'] * 15) + (100 - abs(s['rsi'] - 45) * 2)
-        s['combined_score'] = score
+        # 1. 수급 스코어 (거래대금 가중치)
+        volume_factor = min(30, s['vol_ratio'] * 10)
+        # 2. RSI 안정성 스코어 (RSI 45~50 황금채널에 수렴할수록 높은 점수)
+        rsi_factor = max(0, 40 - abs(s['rsi'] - 47) * 2.5)
+        # 3. 추세 정배열 가중치
+        trend_factor = 30 if s['price'] > s['df']['MA20'].iloc[-1] else 15
+        
+        combined_score = volume_factor + rsi_factor + trend_factor
+        s['combined_score'] = combined_score
         ranked_stocks.append(s)
         
     df_ranked = pd.DataFrame(ranked_stocks)
     top_3_targets = df_ranked.sort_values(by='combined_score', ascending=False).head(3).to_dict('records')
     
-    # 💡 [핵심 도입 3]: 포트폴리오 리스크 패리티 가중치 연산
+    # 💡 [진화 도입 3]: 진화된 리스크 패리티 자산배분 (Risk-Parity Weighting)
     volatilities = {}
     for target in top_3_targets:
         target_df = target['df']
@@ -312,6 +324,7 @@ def run_advanced_portfolio_strategy():
             daily_volatility = 0.03
         volatilities[target['name']] = daily_volatility
 
+    # 변동성 역수 (1/Volatility) 계산
     inv_vols = {name: 1.0 / vol for name, vol in volatilities.items()}
     total_inv_vol = sum(inv_vols.values())
     
@@ -347,6 +360,7 @@ if is_streamlit:
         .block-container { padding: 1.5rem 2rem; max-width: 100% !important; }
         .report-box { padding: 1.2rem; border-radius: 8px; background-color: #f8f9fa; border-left: 5px solid #0f52ba; margin-bottom: 1rem; }
         .price-card { padding: 0.8rem; border-radius: 6px; text-align: center; color: white; font-weight: bold; font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .calculator-box { background-color: #eef2f7; border: 1px solid #ccd6dd; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -451,17 +465,45 @@ if is_streamlit:
             
         st.markdown("---")
         
+        # 💡 [진화 도입 4]: 실시간 스마트 투자 자금 계산기 인터페이스
+        st.subheader("🧮 AITAS-EQ 실시간 리밸런싱 자금 계산기")
+        total_capital = st.number_input("💰 포트폴리오 총 투자 준비금 설정 (원)", min_value=100000, value=10000000, step=100000, format="%d")
+        
+        # 거시경제 안전성 점수에 따라 동적 현금 비중(Cash Buffer) 및 실질 투자 비중(Equity Budget) 결정
+        equity_budget_ratio = max(0.3, min(1.0, m_score / 100.0))
+        total_equity_budget = total_capital * equity_budget_ratio
+        cash_buffer = total_capital - total_equity_budget
+        
+        st.markdown(f"""
+        <div class='calculator-box'>
+            <strong>📊 거시경제 감응형 자금 배분 브리핑:</strong><br>
+            • 현재 매크로 위험도 기준 <strong>실질 주식 매수 자금 비중: {round(equity_budget_ratio * 100, 1)}%</strong> (총 <strong>{format(int(total_equity_budget), ',')} 원</strong> 집행 가능)<br>
+            • 안전 자산 보호용 <strong>🛡️ 리스크 오프 현금 버퍼 비중: {round((1 - equity_budget_ratio) * 100, 1)}%</strong> (총 <strong>{format(int(cash_buffer), ',')} 원</strong> 예수금 동결 보전 권고)
+        </div>
+        """, unsafe_allow_html=True)
+        
         if df_p is not None and not df_p.empty:
             st.subheader("🏆 실시간 최적화 자산배분 TOP 3 포트폴리오")
             
             cols = st.columns(3)
             for idx, row in df_p.iterrows():
+                # 리스크 패리티 가중치 기반 개별 종목 분배금 및 추천 주수 계산
+                allocated_money = total_equity_budget * (row['weight'] / 100.0)
+                shares_to_buy = int(allocated_money / row['price'])
+                
                 with cols[idx]:
                     st.markdown(f"""
                     <div style="padding:1.2rem; border-radius:10px; background-color:#f8f9fa; border-top: 5px solid #0f52ba; margin-bottom:1rem;">
                         <h3 style="margin:0; color:#0f52ba;">🏅 {idx+1}위. {row['name']} ({row['code']})</h3>
-                        <h4 style="margin: 8px 0; color:#118822;">⚖️ 권장 비중: [ {row['weight']}% ]</h4>
+                        <h4 style="margin: 8px 0; color:#118822;">⚖️ 주식 내 비중: [ {row['weight']}% ]</h4>
                         <p style="font-size:0.9rem; color:#666; margin:4px 0;">(20일 변동성 기준 가중: {row['volatility']}%)</p>
+                        
+                        <!-- 💡 스마트 계산기 실시간 연산 출력 시각화 -->
+                        <div style="background-color:#e2ecf5; padding:8px; border-radius:6px; margin: 8px 0; font-size:0.92rem; border-left:3px solid #0f52ba;">
+                            <b>💼 배정 자금: {format(int(allocated_money), ',')} 원</b><br>
+                            <b>🚀 추천 매수량: <span style="color:#0f52ba; font-weight:bold;">{shares_to_buy} 주</span></b>
+                        </div>
+                        
                         <hr style="margin:10px 0;">
                         <div style="background-color:#118822; color:white; padding:8px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:8px;">
                             🎯 추천 매수 진입가: {format(row['buy_price'], ',')} 원 이하
@@ -497,11 +539,17 @@ if is_streamlit:
                     now_str = kst_time.strftime("%Y-%m-%d %H:%M")
                     msg = f"🏛️ [AITAS-EQ] 퀀트 리스크 마스터 포트폴리오\n({now_str} 기준 / 수동 전송)\n\n"
                     msg += f"📊 [1] 실시간 매크로 스코어: 💯 {m_score}점 / 100점\n{m_report}\n\n"
+                    msg += f"🛡️ 자산 배분 비중 가이드 (총액 {format(total_capital, ',')}원 기준):\n"
+                    msg += f"  ▪ 실질 주식 매수금: {format(int(total_equity_budget), ',')}원 ({round(equity_budget_ratio*100, 1)}%)\n"
+                    msg += f"  ▪ 리스크오프 현금버퍼: {format(int(cash_buffer), ',')}원 ({round((1-equity_budget_ratio)*100, 1)}%)\n"
                     msg += "----------------------------------------\n\n"
                     msg += "🏆 [2] 리스크 패리티 최적 자산배분 TOP 3\n\n"
                     for idx, row in df_p.iterrows():
+                        allocated_money = total_equity_budget * (row['weight'] / 100.0)
+                        shares_to_buy = int(allocated_money / row['price'])
+                        
                         msg += f"🏅 {idx+1}위. ★ {row['name']} ★\n"
-                        msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (변동성: {row['volatility']}%)\n"
+                        msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (배정: {format(int(allocated_money), ',')}원 / 추천 {shares_to_buy}주)\n"
                         msg += f"  ▪ 🎯 추천 매수 진입가: {format(row['buy_price'], ',')}원 이하\n"
                         msg += f"  ▪ 🚨 기계적 리스크 손절가: {format(row['stop_price'], ',')}원\n"
                         msg += f"  ▪ 📈 수급 동향: 당일 거래대금 {row['t_value_b']}억 원 / {row['vol_ratio']}배 분출\n"
@@ -524,8 +572,17 @@ else:
     kst_time = datetime.utcnow() + timedelta(hours=9)
     now_str = kst_time.strftime("%Y-%m-%d %H:%M")
     
+    # 기본 투자 원금 1,000만 원 설정으로 자동 연산
+    def_capital = 10000000
+    eq_ratio = max(0.3, min(1.0, m_score / 100.0))
+    eq_budget = def_capital * eq_ratio
+    cash_buf = def_capital - eq_budget
+    
     msg = f"🏛️ [AITAS-EQ] 퀀트 리스크 마스터 포트폴리오\\n({now_str} 기준)\\n\\n"
     msg += f"📊 [1] 실시간 매크로 스코어: 💯 {m_score}점 / 100점\\n{m_report}\\n\\n"
+    msg += f"🛡️ 자산 보전 가이드 (기본 원금 {format(def_capital, ',')}원 기준):\\n"
+    msg += f"  ▪ 실질 주식 매수금: {format(int(eq_budget), ',')}원 ({round(eq_ratio*100, 1)}%)\\n"
+    msg += f"  ▪ 리스크오프 현금버퍼: {format(int(cash_buf), ',')}원 ({round((1-eq_ratio)*100, 1)}%)\\n"
     msg += "----------------------------------------\\n\\n"
     
     if df_p is not None and not df_p.empty:
@@ -533,8 +590,11 @@ else:
             msg += "⚠️ [경보] 매크로 위험 점수가 극도로 낮습니다. 보수적으로 운영하십시오.\\n\\n"
         msg += "🏆 [2] 리스크 패리티 최적 자산배분 TOP 3\\n\\n"
         for idx, row in df_p.iterrows():
+            alloc_m = eq_budget * (row['weight'] / 100.0)
+            shares = int(alloc_m / row['price'])
+            
             msg += f"🏅 {idx+1}위. ★ {row['name']} ★\\n"
-            msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (20일 변동성: {row['volatility']}%)\\n"
+            msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (배정: {format(int(alloc_m), ',')}원 / {shares}주)\\n"
             msg += f"  ▪ 🎯 추천 매수 진입가: {format(row['buy_price'], ',')}원 이하\\n"
             msg += f"  ▪ 🚨 기계적 리스크 손절가: {format(row['stop_price'], ',')}원\\n"
             msg += f"  ▪ 📈 수급 동향: 당일 거래대금 {row['t_value_b']}억 원 / {row['vol_ratio']}배 분출\\n"
