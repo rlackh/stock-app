@@ -26,9 +26,19 @@ except ImportError:
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ==========================================
-# 📊 1. 공통 금융 매크로 및 초안정 하이브리드 수집 모듈
-# ==========================================
+def calculate_rsi(series, period=14):
+    """
+    지정된 기간 동안의 RSI(상대강도지수)를 산출하는 정밀 수학 엔진입니다.
+    이 함수가 누락되어 발생했던 NameError 현상을 완벽히 치유했습니다.
+    """
+    delta = series.diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ema_up = up.ewm(com=period-1, adjust=False).mean()
+    ema_down = down.ewm(com=period-1, adjust=False).mean()
+    rs = ema_up / ema_down
+    return 100 - (100 / (1 + rs))
+
 def get_macro_safety_score():
     """
     미국 10년물 국채 금리(^TNX)와 원/달러 환율(USDKRW=X)의 20일 이동평균 이탈도를 추적하여 시장 환경 점수를 산출합니다.
@@ -145,12 +155,14 @@ def get_market_candidates():
             pass
     return candidates
 
-# 💡 [핵심 보완] 네이버 금융 자체 XML 시세 API 파서 (SSL 핸드셰이크 오류 우회 패치 가동)
 def get_naver_chart_data(code, count=200):
+    """
+    네이버 금융 자체 XML 시세 API 파서
+    보안 서버(SSL) 인증서 핸드셰이크 오류를 완전 우회(verify=False)하여 데이터를 수집합니다.
+    """
     url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
-        # 💡 SSL 우회 verify=False 탑재하여 인증서 오류로 인한 None 유출 현상 근본적 해결
         res = requests.get(url, headers=headers, timeout=5.0, verify=False)
         xml_text = res.text
         # 대소문자 혼용 유실 방지용 re.IGNORECASE 매칭
@@ -176,8 +188,8 @@ def get_naver_chart_data(code, count=200):
         print(f"[경고] 네이버 금융 XML 파싱 실패 ({code}): {e}")
     return None
 
-# 💡 하이브리드 수집 라우터 (네이버 선호 후 실패 시 yfinance 백업)
 def get_clean_chart_data(code, count=200):
+    """네이버 금융 수집기를 선호하고 실패 시 야후 파이낸스를 백업으로 호출하는 이중 수집 라우터입니다."""
     # 1. 차단 및 인증 오류 없는 네이버 금융 자체 API 우선 시도
     df = get_naver_chart_data(code, count)
     if df is not None and not df.empty:
@@ -195,9 +207,6 @@ def get_clean_chart_data(code, count=200):
             pass
     return pd.DataFrame()
 
-# ==========================================
-# 📈 2. 개별 종목 실시간 차트 분석용 연산 엔진
-# ==========================================
 def analyze_stock_live(ticker_code, stock_name):
     """
     특정 종목코드에 대한 실시간 현재가, 이평선 분석, RSI, 이격도 데이터를 수집합니다.
@@ -269,9 +278,6 @@ def get_live_news(stock_name):
         classified.append({"tag": tag, "color": color, "title": t, "link": n['link']})
     return classified
 
-# ==========================================
-# 🔥 3. 주식 거래량 폭발/급증 스캐너 엔진
-# ==========================================
 def find_volume_surging_stocks():
     """
     네이버 양대 시장 상위 종목군을 전수 분석하여,
@@ -338,9 +344,6 @@ def find_volume_surging_stocks():
     df_surging = df_surging.sort_values(by='vol_ratio', ascending=False).head(10)
     return "성공", df_surging
 
-# ==========================================
-# 🏷️ 4. 분야별 테마 추천주 엔진 (네이버 전면 교정 완료)
-# ==========================================
 def scan_sector_recommendations():
     """
     최신 주도 테마 4개 부문별 핵심 종목군을 실시간 분석하여,
@@ -547,7 +550,7 @@ if is_streamlit:
                 * **역배열(Bearish):** 반대로 이평선이 거꾸로 뒤집힌 하락세에서는 올라갈 때마다 위에 물려있던 매물 벽이 폭탄으로 쏟아지니 매수를 절대 피해야 합니다.
                 
                 ### ③ 거래량 분석: 주가 상승의 유일한 휘발유
-                거래량은 자금력이 막강한 기관과 외국인 세력(주포)들이 절대 감출 수 없는 유일한 흔적입니다.
+                거래량은 자금력이 막강한 기관 and 외국인 세력(주포)들이 절대 감출 수 없는 유일한 흔적입니다.
                 * 주가가 횡보하다가 5일 평균 거래량 대비 **1.5배~3배 이상 급증하는 돌파 거래량**이 실리면서 양봉을 그리는 날은 세력이 개입하여 시세를 상방으로 제어하기 시작한 **'첫 신호탄'**입니다.
                 
                 ### ④ 보조 지표(RSI 및 이격도)의 균형 잡기
