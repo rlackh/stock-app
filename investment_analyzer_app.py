@@ -68,7 +68,6 @@ def get_macro_safety_score():
     except Exception as e:
         return 70, f"매크로 분석 레이어 임시 지연: {str(e)} (기본 안전 점수 우회 부여)"
 
-# Streamlit 환경에서만 자동완성 API 캐싱 적용
 if is_streamlit:
     @st.cache_data(ttl=120)
     def 통합_포털_종목_검색(query_text):
@@ -138,15 +137,6 @@ def get_market_candidates():
         except:
             pass
     return candidates
-
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
-    ema_up = up.ewm(com=period-1, adjust=False).mean()
-    ema_down = down.ewm(com=period-1, adjust=False).mean()
-    rs = ema_up / ema_down
-    return 100 - (100 / (1 + rs))
 
 # ==========================================
 # 📈 2. 개별 종목 실시간 차트 분석용 연산 엔진
@@ -226,16 +216,16 @@ def get_live_news(stock_name):
     return classified
 
 # ==========================================
-# 🐋 3. 진화된 AI 리스크 패리티 포트폴리오 (실시간 연산 엔진)
+# 🔥 3. 주식 거래량 폭발/급증 스캐너 엔진 (신규 통합)
 # ==========================================
-def run_advanced_portfolio_strategy():
+def find_volume_surging_stocks():
     """
-    매크로, 100억 거래대금 필터링, 멀티팩터 수급 필터링 후 
-    진화된 거시경제 감응형 리스크 패리티 비중배분을 실행합니다.
+    네이버 양대 시장 상위 종목군을 전수 분석하여,
+    당일 거래량이 직전 5일 평균 거래량 대비 폭발적으로 증가한 주도주를 골라냅니다.
+    동시에 100억 원 거래대금 하한 필터를 적용하여 유동성이 확보된 알짜 대장주만 출력합니다.
     """
-    macro_score, macro_report = get_macro_safety_score()
     candidates = get_market_candidates()
-    survivors = []
+    surging_list = []
     
     progress_bar = None
     status_text = None
@@ -246,45 +236,39 @@ def run_advanced_portfolio_strategy():
     for i, (code, name, suffix) in enumerate(candidates):
         if is_streamlit and progress_bar and status_text:
             progress_bar.progress((i + 1) / len(candidates))
-            status_text.text(f"🔍 AI 멀티팩터 수급 필터 스캔 중... ({name} - {i+1}/{len(candidates)})")
+            status_text.text(f"⚡ 실시간 거래량 폭발 스캔 중... ({name} - {i+1}/{len(candidates)})")
             
         try:
             ticker_symbol = f"{code}{suffix}"
-            df = yf.Ticker(ticker_symbol).history(period="3mo", timeout=1.5)
+            df = yf.Ticker(ticker_symbol).history(period="1mo", timeout=1.5)
             df = df.dropna()
-            if len(df) < 30: continue
+            if len(df) < 10: continue
             
-            df['MA20'] = df['Close'].rolling(window=20).mean()
-            df['MA60'] = df['Close'].rolling(window=60).mean()
             df['Vol5'] = df['Volume'].rolling(window=5).mean()
-            df['RSI'] = calculate_rsi(df['Close'])
             df = df.dropna()
-            
-            if len(df) < 5: continue
+            if len(df) < 2: continue
             
             current_price = float(df['Close'].iloc[-1])
-            ma20 = float(df['MA20'].iloc[-1])
-            ma60 = float(df['MA60'].iloc[-1])
-            rsi = float(df['RSI'].iloc[-1])
             current_vol = float(df['Volume'].iloc[-1])
             avg_vol_5d = float(df['Vol5'].iloc[-2])
             
-            # 💡 [진화 도입 1]: 당일 거래대금 100억 원 하한 필터 (유동성 부족 잡주 배제)
+            # 💡 당일 거래대금 연산 (최소 100억 원 이상 조건)
             transaction_value = current_price * current_vol
             if transaction_value < 10_000_000_000:
                 continue
                 
-            is_trend_bullish = (current_price > ma20) and (ma20 > ma60)
-            is_rsi_stable = (35 <= rsi <= 65)
             vol_ratio = current_vol / avg_vol_5d if avg_vol_5d > 0 else 1.0
-            is_volume_spiking = vol_ratio >= 1.5
             
-            if is_trend_bullish and is_rsi_stable and is_volume_spiking:
-                survivors.append({
-                    'code': code, 'name': name, 'ticker': ticker_symbol,
-                    'price': current_price, 'rsi': rsi, 'vol_ratio': vol_ratio,
-                    't_value_b': round(transaction_value / 100000000, 1),
-                    'df': df
+            # 거래량이 평소 대비 최소 1.5배 이상 스파이크가 일어난 경우만 픽
+            if vol_ratio >= 1.5:
+                surging_list.append({
+                    'code': code,
+                    'name': name,
+                    'price': int(current_price),
+                    'vol_ratio': round(vol_ratio, 2),
+                    'today_vol': int(current_vol),
+                    'avg_vol_5d': int(avg_vol_5d),
+                    't_value_b': round(transaction_value / 100000000, 1)
                 })
         except:
             continue
@@ -293,58 +277,13 @@ def run_advanced_portfolio_strategy():
         progress_bar.empty()
         status_text.empty()
 
-    if not survivors:
-        return macro_score, macro_report, "조건 부합 종목 없음", None
-
-    # 💡 [진화 도입 2]: 다차원 퀀트 멀티팩터 스코어링 (Multi-Factor Scoring)
-    # 거래대금 분출 정도, RSI 이격 안정성, 20일선 정배열 우상향 각도를 결합하여 점수화
-    ranked_stocks = []
-    for s in survivors:
-        # 1. 수급 스코어 (거래대금 가중치)
-        volume_factor = min(30, s['vol_ratio'] * 10)
-        # 2. RSI 안정성 스코어 (RSI 45~50 황금채널에 수렴할수록 높은 점수)
-        rsi_factor = max(0, 40 - abs(s['rsi'] - 47) * 2.5)
-        # 3. 추세 정배열 가중치
-        trend_factor = 30 if s['price'] > s['df']['MA20'].iloc[-1] else 15
+    if not surging_list:
+        return "조건에 부합하는 거래량 폭발 종목 없음", None
         
-        combined_score = volume_factor + rsi_factor + trend_factor
-        s['combined_score'] = combined_score
-        ranked_stocks.append(s)
-        
-    df_ranked = pd.DataFrame(ranked_stocks)
-    top_3_targets = df_ranked.sort_values(by='combined_score', ascending=False).head(3).to_dict('records')
-    
-    # 💡 [진화 도입 3]: 진화된 리스크 패리티 자산배분 (Risk-Parity Weighting)
-    volatilities = {}
-    for target in top_3_targets:
-        target_df = target['df']
-        returns = target_df['Close'].iloc[-20:].pct_change().dropna()
-        daily_volatility = returns.std()
-        if pd.isna(daily_volatility) or daily_volatility <= 0:
-            daily_volatility = 0.03
-        volatilities[target['name']] = daily_volatility
-
-    # 변동성 역수 (1/Volatility) 계산
-    inv_vols = {name: 1.0 / vol for name, vol in volatilities.items()}
-    total_inv_vol = sum(inv_vols.values())
-    
-    final_portfolio = []
-    for target in top_3_targets:
-        name = target['name']
-        alloc_weight = (inv_vols[name] / total_inv_vol) * 100 if total_inv_vol > 0 else 33.3
-        
-        rec_buy = int(target['price'] * 0.985)
-        rec_stop = int(target['price'] * 0.94)
-        
-        final_portfolio.append({
-            'name': name, 'code': target['code'], 'price': int(target['price']),
-            'weight': round(alloc_weight, 1), 'volatility': round(volatilities[name]*100, 2),
-            'buy_price': rec_buy, 'stop_price': rec_stop, 'rsi': round(target['rsi'], 1),
-            'vol_ratio': round(target['vol_ratio'], 1), 't_value_b': target['t_value_b'],
-            'df_chart': target['df'].tail(60)
-        })
-        
-    return macro_score, macro_report, "성공", pd.DataFrame(final_portfolio)
+    # 거래량 배율이 높은 순으로 탑 10 정렬
+    df_surging = pd.DataFrame(surging_list)
+    df_surging = df_surging.sort_values(by='vol_ratio', ascending=False).head(10)
+    return "성공", df_surging
 
 
 # ==========================================
@@ -360,19 +299,19 @@ if is_streamlit:
         .block-container { padding: 1.5rem 2rem; max-width: 100% !important; }
         .report-box { padding: 1.2rem; border-radius: 8px; background-color: #f8f9fa; border-left: 5px solid #0f52ba; margin-bottom: 1rem; }
         .price-card { padding: 0.8rem; border-radius: 6px; text-align: center; color: white; font-weight: bold; font-size: 1.1rem; margin-bottom: 0.5rem; }
-        .calculator-box { background-color: #eef2f7; border: 1px solid #ccd6dd; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
+        .vol-card { padding: 1.2rem; border-radius: 10px; background-color: #fcfcfd; border: 1px solid #e2e8f0; border-top: 4px solid #ff4d4d; margin-bottom: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
         </style>
         """, unsafe_allow_html=True)
 
     # 1) 스트림릿 대시보드 모드로 가동할 때
-    st.title("🏛️ AITAS-EQ 리스크 패리티 포트폴리오 시스템")
-    st.write("20년 경력 운용역의 실시간 매크로 위험 감지기 및 개별 종목 실시간 차트 관제 시스템입니다.")
+    st.title("🏛️ AITAS-EQ 실시간 투자 전략 관제 시스템")
+    st.write("20년 경력 운용역의 실시간 종목 분석기 및 수급 대량 거래량 돌파 포착 장치입니다.")
     
-    # 탭 분리: 개별 정밀 차트 분석 vs 퀀트 포트폴리오
-    tab_live, tab_quant = st.tabs(["🔍 개별 종목 실시간 차트 분석", "🏆 AI 리스크 패리티 포트폴리오 (탑픽)"])
+    # 탭 분리: 개별 정밀 차트 분석 vs 거래량 폭발 주도주
+    tab_live, tab_vol_surge = st.tabs(["🔍 개별 종목 실시간 차트 분석", "🔥 실시간 거래량 폭발 주도주"])
 
     # ------------------------------------------
-    # 탭 1: 개별 종목 실시간 차트 분석 & AI 타점 판독
+    # 탭 1: 개별 종목 실시간 차트 분석 & AI 타점 판독 (보존 완료)
     # ------------------------------------------
     with tab_live:
         st.sidebar.header("🎯 실시간 종목 관제")
@@ -448,162 +387,103 @@ if is_streamlit:
                 st.write("⚪ 연동된 실시간 속보 기사가 존재하지 않습니다.")
 
     # ------------------------------------------
-    # 탭 2: AI 리스크 패리티 포트폴리오
+    # 탭 2: 주식 거래량 폭발 움직임이 있는 종목들 (신규 교체)
     # ------------------------------------------
-    with tab_quant:
-        @st.cache_data(ttl=600)
-        def cached_strategy_run():
-            return run_advanced_portfolio_strategy()
-            
-        m_score, m_report, status, df_p = cached_strategy_run()
+    with tab_vol_surge:
+        st.subheader("🔥 실시간 거래량 폭발 주도주 랭킹 TOP 10")
+        st.write("당일 거래금액이 최소 **100억 원 이상** 수혈되며, 지난 5일 평균 거래량 대비 **가장 강력한 급증 돌파**가 일어난 실시간 알짜 종목들입니다.")
         
-        col_stat1, col_stat2 = st.columns([1, 2])
-        with col_stat1:
-            st.metric(label="📊 글로벌 매크로 안전성 스코어", value=f"{m_score} 점", delta="안전 장세" if m_score >= 75 else "변동성 경계")
-        with col_stat2:
+        # 10분 캐싱을 통해 Streamlit 리프레시 속도를 0.1초 수준으로 최적화
+        @st.cache_data(ttl=600)
+        def cached_volume_surge_scan():
+            return find_volume_surging_stocks()
+            
+        m_score, m_report = get_macro_safety_score()
+        status_msg, df_surge = cached_volume_surge_scan()
+        
+        col_m1, col_m2 = st.columns([1, 2])
+        with col_m1:
+            st.metric(label="📊 글로벌 매크로 안전성 스코어", value=f"{m_score} 점")
+        with col_m2:
             st.info(f"**매크로 모니터링 분석 리포트:**\n{m_report}")
             
         st.markdown("---")
         
-        # 💡 [진화 도입 4]: 실시간 스마트 투자 자금 계산기 인터페이스
-        st.subheader("🧮 AITAS-EQ 실시간 리밸런싱 자금 계산기")
-        total_capital = st.number_input("💰 포트폴리오 총 투자 준비금 설정 (원)", min_value=100000, value=10000000, step=100000, format="%d")
-        
-        # 거시경제 안전성 점수에 따라 동적 현금 비중(Cash Buffer) 및 실질 투자 비중(Equity Budget) 결정
-        equity_budget_ratio = max(0.3, min(1.0, m_score / 100.0))
-        total_equity_budget = total_capital * equity_budget_ratio
-        cash_buffer = total_capital - total_equity_budget
-        
-        st.markdown(f"""
-        <div class='calculator-box'>
-            <strong>📊 거시경제 감응형 자금 배분 브리핑:</strong><br>
-            • 현재 매크로 위험도 기준 <strong>실질 주식 매수 자금 비중: {round(equity_budget_ratio * 100, 1)}%</strong> (총 <strong>{format(int(total_equity_budget), ',')} 원</strong> 집행 가능)<br>
-            • 안전 자산 보호용 <strong>🛡️ 리스크 오프 현금 버퍼 비중: {round((1 - equity_budget_ratio) * 100, 1)}%</strong> (총 <strong>{format(int(cash_buffer), ',')} 원</strong> 예수금 동결 보전 권고)
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if df_p is not None and not df_p.empty:
-            st.subheader("🏆 실시간 최적화 자산배분 TOP 3 포트폴리오")
+        if df_surge is not None and not df_surge.empty:
+            cols = st.columns(2)
             
-            cols = st.columns(3)
-            for idx, row in df_p.iterrows():
-                # 리스크 패리티 가중치 기반 개별 종목 분배금 및 추천 주수 계산
-                allocated_money = total_equity_budget * (row['weight'] / 100.0)
-                shares_to_buy = int(allocated_money / row['price'])
+            for idx, row in df_surge.reset_index(drop=True).iterrows():
+                target_col = cols[0] if idx % 2 == 0 else cols[1]
                 
-                with cols[idx]:
+                with target_col:
                     st.markdown(f"""
-                    <div style="padding:1.2rem; border-radius:10px; background-color:#f8f9fa; border-top: 5px solid #0f52ba; margin-bottom:1rem;">
-                        <h3 style="margin:0; color:#0f52ba;">🏅 {idx+1}위. {row['name']} ({row['code']})</h3>
-                        <h4 style="margin: 8px 0; color:#118822;">⚖️ 주식 내 비중: [ {row['weight']}% ]</h4>
-                        <p style="font-size:0.9rem; color:#666; margin:4px 0;">(20일 변동성 기준 가중: {row['volatility']}%)</p>
-                        
-                        <!-- 💡 스마트 계산기 실시간 연산 출력 시각화 -->
-                        <div style="background-color:#e2ecf5; padding:8px; border-radius:6px; margin: 8px 0; font-size:0.92rem; border-left:3px solid #0f52ba;">
-                            <b>💼 배정 자금: {format(int(allocated_money), ',')} 원</b><br>
-                            <b>🚀 추천 매수량: <span style="color:#0f52ba; font-weight:bold;">{shares_to_buy} 주</span></b>
-                        </div>
-                        
-                        <hr style="margin:10px 0;">
-                        <div style="background-color:#118822; color:white; padding:8px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:8px;">
-                            🎯 추천 매수 진입가: {format(row['buy_price'], ',')} 원 이하
-                        </div>
-                        <div style="background-color:#ff0000; color:white; padding:8px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:8px;">
-                            🚨 기계적 리스크 손절가: {format(row['stop_price'], ',')} 원
-                        </div>
-                        <ul style="font-size:0.92rem; padding-left:20px; color:#333; margin-top:10px;">
+                    <div class='vol-card'>
+                        <h3 style='margin:0; color:#ff4d4d;'>🏅 {idx+1}위. {row['name']} ({row['code']})</h3>
+                        <h4 style='margin: 8px 0; color:#0f52ba;'>⚡ 거래량 분출 비율: [ {row['vol_ratio']}배 폭발 ]</h4>
+                        <hr style='margin:8px 0; border:none; border-top:1px solid #e2e8f0;'>
+                        <ul style='font-size:0.92rem; padding-left:20px; color:#333; margin:0;'>
                             <li>현재가: <b>{format(row['price'], ',')}원</b></li>
-                            <li>단기 과열도(RSI): <b>{row['rsi']}점</b></li>
-                            <li>당일 거래대금: <b>{row['t_value_b']}억 원</b> (평소 {row['vol_ratio']}배)</li>
+                            <li>당일 거래대금: <b>{row['t_value_b']}억 원</b> (100억 기준 통과)</li>
+                            <li>당일 거래량: <b>{format(row['today_vol'], ',')} 주</b></li>
+                            <li>5일 평균 거래량: <b>{format(row['avg_vol_5d'], ',')} 주</b></li>
                         </ul>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    hist_df = row['df_chart']
-                    fig = go.Figure(data=[go.Candlestick(
-                        x=hist_df.index, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'],
-                        increasing_line_color='red', decreasing_line_color='blue', name="주가"
-                    )])
-                    fig.update_layout(xaxis_rangeslider_visible=False, height=220, margin=dict(l=10, r=10, t=10, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-            # 텔레그램 수동 발송 제어 장치 추가
+            # 텔레그램 경보 수동 발송 장치
             st.markdown("---")
-            st.subheader("📡 수동 경보 전송 제어")
-            if st.button("📨 현재 포트폴리오 즉시 텔레그램 경보 전송", type="primary"):
+            st.subheader("📡 수동 거래량 폭발 경보 전송 제어")
+            if st.button("📨 현재 거래량 급증 TOP 10 텔레그램 발송", type="primary"):
                 if not TOKEN or not CHAT_ID:
                     st.error("❌ 텔레그램 토큰(TELEGRAM_TOKEN) 또는 채널 ID(TELEGRAM_CHAT_ID) 환경변수가 세팅되지 않았습니다.")
                 else:
-                    # 리포트 메세지 생성
                     kst_time = datetime.utcnow() + timedelta(hours=9)
                     now_str = kst_time.strftime("%Y-%m-%d %H:%M")
-                    msg = f"🏛️ [AITAS-EQ] 퀀트 리스크 마스터 포트폴리오\n({now_str} 기준 / 수동 전송)\n\n"
-                    msg += f"📊 [1] 실시간 매크로 스코어: 💯 {m_score}점 / 100점\n{m_report}\n\n"
-                    msg += f"🛡️ 자산 배분 비중 가이드 (총액 {format(total_capital, ',')}원 기준):\n"
-                    msg += f"  ▪ 실질 주식 매수금: {format(int(total_equity_budget), ',')}원 ({round(equity_budget_ratio*100, 1)}%)\n"
-                    msg += f"  ▪ 리스크오프 현금버퍼: {format(int(cash_buffer), ',')}원 ({round((1-equity_budget_ratio)*100, 1)}%)\n"
-                    msg += "----------------------------------------\n\n"
-                    msg += "🏆 [2] 리스크 패리티 최적 자산배분 TOP 3\n\n"
-                    for idx, row in df_p.iterrows():
-                        allocated_money = total_equity_budget * (row['weight'] / 100.0)
-                        shares_to_buy = int(allocated_money / row['price'])
-                        
-                        msg += f"🏅 {idx+1}위. ★ {row['name']} ★\n"
-                        msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (배정: {format(int(allocated_money), ',')}원 / 추천 {shares_to_buy}주)\n"
-                        msg += f"  ▪ 🎯 추천 매수 진입가: {format(row['buy_price'], ',')}원 이하\n"
-                        msg += f"  ▪ 🚨 기계적 리스크 손절가: {format(row['stop_price'], ',')}원\n"
-                        msg += f"  ▪ 📈 수급 동향: 당일 거래대금 {row['t_value_b']}억 원 / {row['vol_ratio']}배 분출\n"
-                        msg += f"  ▪ 🔍 현재 가격: {format(row['price'], ',')}원 / RSI: {row['rsi']}\n\n"
+                    msg = f"🔥 [AITAS-EQ] 실시간 거래량 폭발 돌파 TOP 10\\n({now_str} 기준)\\n\\n"
+                    msg += f"📊 매크로 스코어: 💯 {m_score}점\\n{m_report}\\n\\n"
+                    msg += "----------------------------------------\\n\\n"
                     
+                    for idx, row in df_surge.reset_index(drop=True).iterrows():
+                        msg += f"🏅 {idx+1}위. ★ {row['name']} ★\\n"
+                        msg += f"  ▪ 수급 분출 배율: [ {row['vol_ratio']}배 폭발 ]\\n"
+                        msg += f"  ▪ 당일 거래대금: {row['t_value_b']}억 원\\n"
+                        msg += f"  ▪ 현재 가격: {format(row['price'], ',')}원\\n\\n"
+                        
                     try:
                         res = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
                         if res.status_code == 200:
-                            st.success("✅ 텔레그램 경보가 성공적으로 발송되었습니다!")
+                            st.success("✅ 텔레그램 수급 경보가 성공적으로 발송되었습니다!")
                         else:
                             st.error(f"❌ 발송 실패 (상태 코드: {res.status_code}) - {res.text}")
                     except Exception as e:
                         st.error(f"❌ 전송 에러 발생: {e}")
+                        
         else:
-            st.warning(f"⚠️ 현재 조건에 부합하는 종목이 없습니다. ({status})")
+            st.warning(f"⚠️ 현재 조건에 부합하는 수급 분출 종목이 없습니다. ({status_msg})")
 
 else:
     # 2) 깃허브 액션 배포(CLI 콘솔 모드)로 가동할 때 자동으로 텔레그램 메시지 전송
-    m_score, m_report, status, df_p = run_advanced_portfolio_strategy()
+    m_score, m_report = get_macro_safety_score()
+    status_msg, df_surge = find_volume_surging_stocks()
     kst_time = datetime.utcnow() + timedelta(hours=9)
     now_str = kst_time.strftime("%Y-%m-%d %H:%M")
     
-    # 기본 투자 원금 1,000만 원 설정으로 자동 연산
-    def_capital = 10000000
-    eq_ratio = max(0.3, min(1.0, m_score / 100.0))
-    eq_budget = def_capital * eq_ratio
-    cash_buf = def_capital - eq_budget
-    
-    msg = f"🏛️ [AITAS-EQ] 퀀트 리스크 마스터 포트폴리오\\n({now_str} 기준)\\n\\n"
+    msg = f"🔥 [AITAS-EQ] 실시간 거래량 폭발 돌파 TOP 10\\n({now_str} 기준)\\n\\n"
     msg += f"📊 [1] 실시간 매크로 스코어: 💯 {m_score}점 / 100점\\n{m_report}\\n\\n"
-    msg += f"🛡️ 자산 보전 가이드 (기본 원금 {format(def_capital, ',')}원 기준):\\n"
-    msg += f"  ▪ 실질 주식 매수금: {format(int(eq_budget), ',')}원 ({round(eq_ratio*100, 1)}%)\\n"
-    msg += f"  ▪ 리스크오프 현금버퍼: {format(int(cash_buf), ',')}원 ({round((1-eq_ratio)*100, 1)}%)\\n"
     msg += "----------------------------------------\\n\\n"
     
-    if df_p is not None and not df_p.empty:
-        if m_score < 50:
-            msg += "⚠️ [경보] 매크로 위험 점수가 극도로 낮습니다. 보수적으로 운영하십시오.\\n\\n"
-        msg += "🏆 [2] 리스크 패리티 최적 자산배분 TOP 3\\n\\n"
-        for idx, row in df_p.iterrows():
-            alloc_m = eq_budget * (row['weight'] / 100.0)
-            shares = int(alloc_m / row['price'])
-            
+    if df_surge is not None and not df_surge.empty:
+        msg += "🏆 [2] 당일 거래대금 100억↑ 거래량 폭발 TOP 10\\n\\n"
+        for idx, row in df_surge.reset_index(drop=True).iterrows():
             msg += f"🏅 {idx+1}위. ★ {row['name']} ★\\n"
-            msg += f"  ▪ ⚖️ 권장비중: [ {row['weight']}% ] (배정: {format(int(alloc_m), ',')}원 / {shares}주)\\n"
-            msg += f"  ▪ 🎯 추천 매수 진입가: {format(row['buy_price'], ',')}원 이하\\n"
-            msg += f"  ▪ 🚨 기계적 리스크 손절가: {format(row['stop_price'], ',')}원\\n"
-            msg += f"  ▪ 📈 수급 동향: 당일 거래대금 {row['t_value_b']}억 원 / {row['vol_ratio']}배 분출\\n"
-            msg += f"  ▪ 🔍 현재 가격: {format(row['price'], ',')}원 / RSI: {row['rsi']}\\n\\n"
+            msg += f"  ▪ 수급 분출 배율: [ {row['vol_ratio']}배 폭발 ]\\n"
+            msg += f"  ▪ 당일 거래대금: {row['t_value_b']}억 원\\n"
+            msg += f"  ▪ 현재 가격: {format(row['price'], ',')}원\\n\\n"
     else:
-        msg += f"⚠️ 현재 조건에 부합하는 종목이 없습니다. (상태: {status})"
+        msg += f"⚠️ 현재 조건에 부합하는 종목이 없습니다. (상태: {status_msg})"
         
     try:
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg}, timeout=10)
-        print("[시스템] 텔레그램 리포트 정상 발송 완료!")
+        print("[시스템] 텔레그램 거래량 돌파 리포트 발송 완료!")
     except Exception as e:
         print("전송 에러:", e)
