@@ -329,14 +329,34 @@ if is_streamlit:
             df = res_live['df']
             
             import plotly.graph_objects as go
+            
+            # 💡 날짜를 문자열 포맷(YYYY-MM-DD)으로 변환하여 주말 공백을 제거하고 하루하루 표시합니다.
+            x_dates = df.index.strftime('%Y-%m-%d')
+            
             fig = go.Figure(data=[go.Candlestick(
-                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+                x=x_dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
                 increasing_line_color='#e61919', decreasing_line_color='#1919e6', name="주가"
             )])
-            fig.add_trace(go.Scatter(x=df.index, y=df['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
-            fig.add_trace(go.Scatter(x=df.index, y=df['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
-            fig.add_trace(go.Scatter(x=df.index, y=df['60MA'], line=dict(color='green', width=1.5), name='60일선'))
-            fig.update_layout(xaxis_rangeslider_visible=False, height=410, margin=dict(l=10, r=10, t=10, b=10))
+            fig.add_trace(go.Scatter(x=x_dates, y=df['5MA'], line=dict(color='orange', width=1.5), name='5일선'))
+            fig.add_trace(go.Scatter(x=x_dates, y=df['20MA'], line=dict(color='purple', width=1.5), name='20일선'))
+            fig.add_trace(go.Scatter(x=x_dates, y=df['60MA'], line=dict(color='green', width=1.5), name='60일선'))
+            
+            # 💡 Y축 가격에 '100,000' 천 단위 컴마를 적용하고, X축은 일별 카테고리 형태로 설정합니다.
+            fig.update_layout(
+                xaxis_rangeslider_visible=False, 
+                height=410, 
+                margin=dict(l=10, r=10, t=10, b=10),
+                xaxis=dict(
+                    type='category',
+                    tickangle=-45,
+                    tickmode='auto',
+                    nticks=15,
+                    tickfont=dict(size=10)
+                ),
+                yaxis=dict(
+                    tickformat=','
+                )
+            )
             st.plotly_chart(fig, use_container_width=True)
             
             # 이평선 실시간 배열 추적
